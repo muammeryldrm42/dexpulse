@@ -1,0 +1,30 @@
+[
+  {"symbol":"SOL","name":"Solana","address":"So11111111111111111111111111111111111111112"},
+  {"symbol":"JUP","name":"Jupiter","address":"JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"},
+  {"symbol":"BONK","name":"Bonk","address":"DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"},
+  {"symbol":"WIF","name":"dogwifhat","address":"EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzL9C5F8Cw1P6k"},
+  {"symbol":"RAY","name":"Raydium","address":"4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S6Vh2Yj1x6yDk"},
+  {"symbol":"ORCA","name":"Orca","address":"orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE"},
+  {"symbol":"PYTH","name":"Pyth Network","address":"HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3"},
+  {"symbol":"JTO","name":"Jito","address":"jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL"},
+  {"symbol":"MNDE","name":"Marinade","address":"MNDEFzGvMt87ueuHvVU9VcTQsAP5b3fTGPsHkPjPpVd"},
+
+  {"symbol":"DRIFT","name":"Drift"},
+  {"symbol":"TNSR","name":"Tensor"},
+  {"symbol":"JLP","name":"Jupiter Perps LP"},
+  {"symbol":"NOS","name":"Nosana"},
+  {"symbol":"SHDW","name":"Shadow Token"},
+  {"symbol":"HNT","name":"Helium"},
+  {"symbol":"MOBILE","name":"Helium Mobile"},
+
+  {"symbol":"POPCAT","name":"Popcat"},
+  {"symbol":"MEW","name":"MEW"},
+  {"symbol":"BOME","name":"BOOK OF MEME"},
+  {"symbol":"SLERF","name":"Slerf"},
+  {"symbol":"MYRO","name":"Myro"},
+  {"symbol":"SAMO","name":"Samoyedcoin"},
+  {"symbol":"WEN","name":"Wen"},
+
+  {"symbol":"KMNO","name":"Kamino"},
+  {"symbol":"W","name":"Wormhole"}
+]

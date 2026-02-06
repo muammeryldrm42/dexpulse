@@ -78,6 +78,13 @@ function safeNum(x){
   return Number.isFinite(n) ? n : 0;
 }
 
+function currentMarketCap(bestPair){
+  if (!bestPair) return 0;
+  const mc = safeNum(bestPair?.marketCap);
+  if (mc > 0) return mc;
+  return safeNum(bestPair?.fdv);
+}
+
 function isMcBlacklisted(address){
   return Boolean(vetoStore.items[String(address||"")]);
 }
@@ -151,11 +158,12 @@ function passesQualityGate(bestPair, allowHighRisk = false){
 function trackBuySignals(items, source){
   for (const item of items){
     if (!item?.showBuy) continue;
-    const mc = item?.bestPair?.marketCap;
+    const mc = currentMarketCap(item?.bestPair);
     perfHistory.recordBuySignal({ address: item.address, source, ident: item.ident, mc });
     const entry = perfHistory.getEntry(item.address, source);
     if (entry?.entryMc > 0){
       item.entryMc = entry.entryMc;
+      if (entry.entryTs) item.entryTs = entry.entryTs;
       item.peakMc = entry.peakMc;
       item.lastMc = entry.lastMc;
       item.signal = entry.signal || "BUY";
@@ -165,7 +173,7 @@ function trackBuySignals(items, source){
 
 function updatePeaks(items){
   for (const item of items){
-    const mc = item?.bestPair?.marketCap;
+    const mc = currentMarketCap(item?.bestPair);
     perfHistory.updatePeak(item.address, mc);
   }
 }
@@ -909,6 +917,7 @@ app.get("/api/list/all_signals", async (req,res)=>{
           existing.sources = Array.from(new Set([...(existing.sources || []), source]));
           existing.showBuy = Boolean(existing.showBuy || item.showBuy);
           if (!existing.entryMc && item.entryMc) existing.entryMc = item.entryMc;
+          if (!existing.entryTs && item.entryTs) existing.entryTs = item.entryTs;
           if (!existing.peakMc && item.peakMc) existing.peakMc = item.peakMc;
           if (!existing.lastMc && item.lastMc) existing.lastMc = item.lastMc;
           if (!existing.signal && item.signal) existing.signal = item.signal;

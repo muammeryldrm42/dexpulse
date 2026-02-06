@@ -464,6 +464,48 @@ function computePotential(bestPair, tf){
   return { potential, why: why.slice(0,3), buy, buyWhy };
 }
 
+function computeSignalPlusBuy(bestPair, potential){
+  if (!bestPair) return { buy: false, buyWhy: ["no data"] };
+  const risk = computeRisk(bestPair);
+  const dump = computeDumpRisk(bestPair);
+
+  const b5 = safeNum(bestPair?.txns?.m5?.buys);
+  const s5 = safeNum(bestPair?.txns?.m5?.sells);
+  const b15 = safeNum(bestPair?.txns?.m15?.buys);
+  const s15 = safeNum(bestPair?.txns?.m15?.sells);
+  const buys = b5 + b15;
+  const sells = s5 + s15;
+  const total = buys + sells;
+  const buyRatio = (buys + 1) / (total + 2);
+
+  const buyWhy = [];
+  const flowOK = (buyRatio >= 0.58 && total >= 12);
+  if (!flowOK) buyWhy.push("flow not strong");
+
+  const activityOK = total >= 10;
+  if (!activityOK) buyWhy.push("low activity");
+
+  const riskOK = (risk.riskLabel !== "HIGH");
+  if (!riskOK) buyWhy.push("risk veto");
+
+  const dumpOK = (dump.dumpRisk !== "HIGH");
+  if (!dumpOK) buyWhy.push("dump risk");
+
+  const manipulationVeto = (risk.flags.includes("MANIPULATION_RISK") || risk.flags.includes("EXTREME_SHORT_MOVE"));
+  if (manipulationVeto) buyWhy.push("manipulation risk");
+
+  const potentialOK = (potential?.potential || "LOW") !== "LOW";
+  if (!potentialOK) buyWhy.push("potential too low");
+
+  const buy = flowOK && activityOK && riskOK && dumpOK && potentialOK && !manipulationVeto;
+  if (buy){
+    buyWhy.length = 0;
+    buyWhy.push("flow + activity + potential");
+  }
+
+  return { buy, buyWhy };
+}
+
 function applyListQuery(items, req, options = {}){
   const q = req.query || {};
   const tf = options.tf || String(q.tf || "15m");
@@ -870,7 +912,8 @@ function buildHotBuysList(seed, tf){
 function buildSignalPlusList(seed, tf, potentialTier){
   const items = seed.map(x=>{
     const pot = computePotential(x.bestPair, tf);
-    return { ...x, potential: pot };
+    const signalBuy = computeSignalPlusBuy(x.bestPair, pot);
+    return { ...x, potential: pot, showBuy: Boolean(signalBuy.buy), buyWhy: signalBuy.buyWhy };
   })
   .filter(x => x?.bestPair && !isTrash(x.bestPair))
   .filter(x => x.risk.riskLabel !== "HIGH")
@@ -912,7 +955,6 @@ function buildSignalPlusList(seed, tf, potentialTier){
     }
     return true;
   })
-  .map(x => ({ ...x, showBuy: Boolean(x.potential.buy), buyWhy: x.potential.buyWhy }))
   .filter(x => x.showBuy)
   .sort((a,b)=>{
     const pRank = (p)=> p==="HIGH"?3:p==="MED"?2:1;

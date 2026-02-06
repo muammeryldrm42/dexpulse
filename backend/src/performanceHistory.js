@@ -198,6 +198,22 @@ function listEntries(){
 module.exports = {
   recordBuySignal,
   getEntry: (address, source) => findEntry(address, source).entry,
+  getLatestEntry: (address) => {
+    const addr = String(address || "");
+    if (!addr) return null;
+    let latest = null;
+    for (const entry of Object.values(history.entries)){
+      if (entry.address !== addr) continue;
+      if (!latest){
+        latest = entry;
+        continue;
+      }
+      const latestTs = Number(latest.entryTs || latest.lastSeen || 0);
+      const entryTs = Number(entry.entryTs || entry.lastSeen || 0);
+      if (entryTs > latestTs) latest = entry;
+    }
+    return latest;
+  },
   updatePeak,
   markRemoved,
   listEntries,

@@ -710,6 +710,10 @@ async function tokenDetail(address, tf){
           source: signalEntry.source || "",
           entryMc: Number(signalEntry.entryMc || 0),
           entryTs: Number(signalEntry.entryTs || 0),
+          peakMc: Number(signalEntry.peakMc || 0),
+          lastMc: Number(signalEntry.lastMc || 0),
+          roiPct: Number(signalEntry.roiPct || 0),
+          roiX: Number(signalEntry.roiX || 0),
           signal: signalEntry.signal || ""
         }
       : null,

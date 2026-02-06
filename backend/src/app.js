@@ -78,6 +78,31 @@ function safeNum(x){
   return Number.isFinite(n) ? n : 0;
 }
 
+function numQuery(value){
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+const RISK_FLAG_EXPLANATIONS = {
+  NO_PAIR_DATA: "No pair data available for this token.",
+  MICRO_LIQUIDITY: "Extremely thin liquidity; price can be moved with small trades.",
+  VERY_LOW_LIQUIDITY: "Very low liquidity; slippage/manipulation risk is elevated.",
+  LOW_LIQUIDITY: "Low liquidity; price impact risk is higher than usual.",
+  EXTREME_SHORT_MOVE: "Very large short-term move detected; could be unstable.",
+  HIGH_VOLATILITY: "High short-term volatility detected.",
+  MANIPULATION_RISK: "Move appears outsized relative to liquidity; potential manipulation.",
+  ANOMALOUS_FLOW: "Unusually one-sided tape; could be wash/bot activity.",
+  FLOW_IMBALANCE: "Significant buy/sell imbalance detected.",
+  LOW_ACTIVITY: "Low trade activity; signals are less reliable.",
+  FALLING_KNIFE: "Multi-timeframe downtrend suggests continued downside risk."
+};
+
+function riskReasons(flags){
+  return (flags || [])
+    .map(flag => RISK_FLAG_EXPLANATIONS[flag])
+    .filter(Boolean);
+}
+
 function currentMarketCap(bestPair){
   if (!bestPair) return 0;
   const mc = safeNum(bestPair?.marketCap);
@@ -222,7 +247,10 @@ function trendChange(bestPair, tf){
 }
 
 function computeRisk(bestPair){
-  if (!bestPair) return { riskScore: 85, riskLabel: "HIGH", flags:["NO_PAIR_DATA"] };
+  if (!bestPair){
+    const flags = ["NO_PAIR_DATA"];
+    return { riskScore: 85, riskLabel: "HIGH", flags, reasons: riskReasons(flags) };
+  }
 
   const liq = safeNum(bestPair?.liquidity?.usd);
   const ch5 = Math.abs(safeNum(bestPair?.priceChange?.m5));
@@ -261,7 +289,7 @@ function computeRisk(bestPair){
 
   score = Math.max(0, Math.min(100, score));
   const riskLabel = score <= 35 ? "LOW" : score <= 65 ? "MED" : "HIGH";
-  return { riskScore: score, riskLabel, flags };
+  return { riskScore: score, riskLabel, flags, reasons: riskReasons(flags) };
 }
 
 function computeDumpRisk(bestPair){
@@ -434,6 +462,147 @@ function computePotential(bestPair, tf){
   }
 
   return { potential, why: why.slice(0,3), buy, buyWhy };
+}
+
+function applyListQuery(items, req, options = {}){
+  const q = req.query || {};
+  const tf = options.tf || String(q.tf || "15m");
+  const minLiquidity = numQuery(q.minLiquidity);
+  const minVolume = numQuery(q.minVolume);
+  const minRiskScore = numQuery(q.minRiskScore);
+  const maxRiskScore = numQuery(q.maxRiskScore);
+  const riskLabel = String(q.riskLabel || "").toUpperCase();
+  const minWhaleScore = numQuery(q.minWhaleScore);
+  const minSmartScore = numQuery(q.minSmartScore);
+  const minHotScore = numQuery(q.minHotScore);
+  const minTrend = numQuery(q.minTrend);
+  const potential = String(q.potential || "").toUpperCase();
+
+  let filtered = items.filter(item => {
+    if (minLiquidity !== null && safeNum(item?.bestPair?.liquidity?.usd) < minLiquidity) return false;
+    if (minVolume !== null && safeNum(item?.bestPair?.volume?.h24) < minVolume) return false;
+    if (minRiskScore !== null && safeNum(item?.risk?.riskScore) < minRiskScore) return false;
+    if (maxRiskScore !== null && safeNum(item?.risk?.riskScore) > maxRiskScore) return false;
+    if (riskLabel && String(item?.risk?.riskLabel || "").toUpperCase() !== riskLabel) return false;
+    if (minWhaleScore !== null && safeNum(item?.whale?.whaleScore) < minWhaleScore) return false;
+    if (minSmartScore !== null && safeNum(item?.smart?.smartScore) < minSmartScore) return false;
+    if (minHotScore !== null && safeNum(item?.hotScore) < minHotScore) return false;
+    if (potential && String(item?.potential?.potential || "").toUpperCase() !== potential) return false;
+    if (minTrend !== null){
+      const trendValue = Number.isFinite(item?.trend)
+        ? item.trend
+        : (item?.bestPair ? trendChange(item.bestPair, tf) : null);
+      if (trendValue === null || safeNum(trendValue) < minTrend) return false;
+    }
+    return true;
+  });
+
+  const total = filtered.length;
+  const defaultLimit = Number.isFinite(options.defaultLimit) ? options.defaultLimit : 30;
+  const maxLimit = Number.isFinite(options.maxLimit) ? options.maxLimit : 100;
+  const limitRaw = numQuery(q.limit);
+  const offsetRaw = numQuery(q.offset);
+  const limit = Math.max(1, Math.min(maxLimit, limitRaw === null ? defaultLimit : Math.floor(limitRaw)));
+  const offset = Math.max(0, offsetRaw === null ? 0 : Math.floor(offsetRaw));
+
+  filtered = filtered.slice(offset, offset + limit);
+  return { items: filtered, meta: { total, limit, offset } };
+}
+
+function buildPerformanceSummary(entries){
+  const total = entries.length;
+  const byStatus = { active: 0, removed: 0, other: 0 };
+  const bySource = {};
+  let roiSum = 0;
+  let roiCount = 0;
+  let wins = 0;
+
+  for (const entry of entries){
+    const status = String(entry.status || "").toLowerCase();
+    if (status === "active") byStatus.active += 1;
+    else if (status === "removed") byStatus.removed += 1;
+    else byStatus.other += 1;
+
+    const roiPct = Number(entry.roiPct || 0);
+    if (Number.isFinite(roiPct)){
+      roiSum += roiPct;
+      roiCount += 1;
+      if (roiPct > 0) wins += 1;
+    }
+
+    const src = String(entry.source || "unknown");
+    if (!bySource[src]){
+      bySource[src] = { count: 0, avgRoiPct: 0, winRate: 0 };
+    }
+    bySource[src].count += 1;
+  }
+
+  for (const [src, stats] of Object.entries(bySource)){
+    const srcEntries = entries.filter(e => String(e.source || "unknown") === src);
+    const srcRoi = srcEntries.reduce((acc, e)=> acc + Number(e.roiPct || 0), 0);
+    const srcWins = srcEntries.filter(e => Number(e.roiPct || 0) > 0).length;
+    const denom = Math.max(1, srcEntries.length);
+    stats.avgRoiPct = Number((srcRoi / denom).toFixed(2));
+    stats.winRate = Number(((srcWins / denom) * 100).toFixed(2));
+  }
+
+  return {
+    total,
+    byStatus,
+    avgRoiPct: roiCount ? Number((roiSum / roiCount).toFixed(2)) : 0,
+    winRate: roiCount ? Number(((wins / roiCount) * 100).toFixed(2)) : 0,
+    bySource
+  };
+}
+
+async function getAllSignals(tf, potential){
+  const seed = await boostedSeed(60);
+
+  const smart = buildSmartMoneyList(seed, tf);
+  const whale = buildWhaleAlertList(seed, tf);
+  const hot = buildHotBuysList(seed, tf);
+  const signal = buildSignalPlusList(seed, tf, potential);
+  trackBuySignals(smart, "Smart Money");
+  trackBuySignals(whale, "Whale Alert");
+  trackBuySignals(hot, "Hot Buys");
+  trackBuySignals(signal, "Signal+");
+
+  const by = new Map();
+  const merge = (list, source)=>{
+    for (const item of list){
+      const key = String(item.address || "");
+      if (!key) continue;
+      const existing = by.get(key);
+      if (!existing){
+        by.set(key, { ...item, sources: [source], showBuy: Boolean(item.showBuy) });
+      }else{
+        existing.sources = Array.from(new Set([...(existing.sources || []), source]));
+        existing.showBuy = Boolean(existing.showBuy || item.showBuy);
+        if (!existing.entryMc && item.entryMc) existing.entryMc = item.entryMc;
+        if (!existing.entryTs && item.entryTs) existing.entryTs = item.entryTs;
+        if (!existing.peakMc && item.peakMc) existing.peakMc = item.peakMc;
+        if (!existing.lastMc && item.lastMc) existing.lastMc = item.lastMc;
+        if (!existing.signal && item.signal) existing.signal = item.signal;
+        if (!existing.buyWhy && item.buyWhy) existing.buyWhy = item.buyWhy;
+      }
+    }
+  };
+
+  merge(smart, "Smart Money");
+  merge(whale, "Whale Alert");
+  merge(hot, "Hot Buys");
+  merge(signal, "Signal+");
+
+  const items = Array.from(by.values())
+    .sort((a,b)=>{
+      const buy = (b.showBuy ? 1 : 0) - (a.showBuy ? 1 : 0);
+      if (buy !== 0) return buy;
+      return (a.risk?.riskScore || 0) - (b.risk?.riskScore || 0);
+    })
+    .slice(0, 60);
+  updatePeaks(items);
+
+  return items;
 }
 
 function identFromPair(bestPair, tokenAddress){
@@ -769,8 +938,9 @@ app.get("/api/list/majors", async (req,res)=>{
     });
 
     const items = enriched.filter(Boolean);
-    updatePeaks(items);
-    res.json({ count: items.length, items });
+    const filtered = applyListQuery(items, req, { defaultLimit: 30, maxLimit: 100, tf });
+    updatePeaks(filtered.items);
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
@@ -785,8 +955,9 @@ app.get("/api/list/trending_low_risk", async (req,res)=>{
       .map(x => ({ ...x, trend: trendChange(x.bestPair, tf) }))
       .sort((a,b)=> (a.risk.riskScore - b.risk.riskScore) || (b.trend - a.trend))
       .slice(0, 30);
-    updatePeaks(items);
-    res.json({ count: items.length, items });
+    const filtered = applyListQuery(items, req, { defaultLimit: 30, maxLimit: 100, tf });
+    updatePeaks(filtered.items);
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
@@ -799,8 +970,9 @@ app.get("/api/list/top_volume", async (req,res)=>{
       .map(x => ({ ...x, vol24: safeNum(x.bestPair?.volume?.h24) }))
       .sort((a,b)=> b.vol24 - a.vol24)
       .slice(0, 30);
-    updatePeaks(items);
-    res.json({ count: items.length, items });
+    const filtered = applyListQuery(items, req, { defaultLimit: 30, maxLimit: 100 });
+    updatePeaks(filtered.items);
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
@@ -813,8 +985,9 @@ app.get("/api/list/high_liquidity", async (req,res)=>{
       .map(x => ({ ...x, liq: safeNum(x.bestPair?.liquidity?.usd) }))
       .sort((a,b)=> b.liq - a.liq)
       .slice(0, 30);
-    updatePeaks(items);
-    res.json({ count: items.length, items });
+    const filtered = applyListQuery(items, req, { defaultLimit: 30, maxLimit: 100 });
+    updatePeaks(filtered.items);
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
@@ -825,9 +998,10 @@ app.get("/api/list/whale_alert", async (req,res)=>{
     const tf = String(req.query.tf || "15m");
     const seed = await boostedSeed(40);
     const items = buildWhaleAlertList(seed, tf);
-    updatePeaks(items);
-    trackBuySignals(items, "Whale Alert");
-    res.json({ count: items.length, items });
+    const filtered = applyListQuery(items, req, { defaultLimit: 30, maxLimit: 100, tf });
+    updatePeaks(filtered.items);
+    trackBuySignals(filtered.items, "Whale Alert");
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
@@ -838,9 +1012,10 @@ app.get("/api/list/smart_money", async (req,res)=>{
     const tf = String(req.query.tf || "15m");
     const seed = await boostedSeed(42);
     const items = buildSmartMoneyList(seed, tf);
-    updatePeaks(items);
-    trackBuySignals(items, "Smart Money");
-    res.json({ count: items.length, items });
+    const filtered = applyListQuery(items, req, { defaultLimit: 30, maxLimit: 100, tf });
+    updatePeaks(filtered.items);
+    trackBuySignals(filtered.items, "Smart Money");
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
@@ -851,9 +1026,10 @@ app.get("/api/list/hot_buys", async (req,res)=>{
     const tf = String(req.query.tf || "15m");
     const seed = await boostedSeed(42);
     const items = buildHotBuysList(seed, tf);
-    updatePeaks(items);
-    trackBuySignals(items, "Hot Buys");
-    res.json({ count: items.length, items });
+    const filtered = applyListQuery(items, req, { defaultLimit: 30, maxLimit: 100, tf });
+    updatePeaks(filtered.items);
+    trackBuySignals(filtered.items, "Hot Buys");
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
@@ -868,8 +1044,9 @@ app.get("/api/list/risky", async (req,res)=>{
       .filter(x => !x.risk.flags.includes("FALLING_KNIFE"))
       .sort((a,b)=> b.risk.riskScore - a.risk.riskScore)
       .slice(0, 30);
-    updatePeaks(items);
-    res.json({ count: items.length, items });
+    const filtered = applyListQuery(items, req, { defaultLimit: 30, maxLimit: 100 });
+    updatePeaks(filtered.items);
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
@@ -881,10 +1058,11 @@ app.get("/api/list/uptrend_signal", async (req,res)=>{
     const potential = String(req.query.potential || "MED");
     const seed = await boostedSeed(55);
     const items = buildSignalPlusList(seed, tf, potential);
-    updatePeaks(items);
-    trackBuySignals(items, "Signal+");
+    const filtered = applyListQuery(items, req, { defaultLimit: 30, maxLimit: 100, tf });
+    updatePeaks(filtered.items);
+    trackBuySignals(filtered.items, "Signal+");
 
-    res.json({ count: items.length, items });
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
@@ -894,53 +1072,9 @@ app.get("/api/list/all_signals", async (req,res)=>{
   try{
     const tf = String(req.query.tf || "15m");
     const potential = String(req.query.potential || "MED");
-    const seed = await boostedSeed(60);
-
-    const smart = buildSmartMoneyList(seed, tf);
-    const whale = buildWhaleAlertList(seed, tf);
-    const hot = buildHotBuysList(seed, tf);
-    const signal = buildSignalPlusList(seed, tf, potential);
-    trackBuySignals(smart, "Smart Money");
-    trackBuySignals(whale, "Whale Alert");
-    trackBuySignals(hot, "Hot Buys");
-    trackBuySignals(signal, "Signal+");
-
-    const by = new Map();
-    const merge = (list, source)=>{
-      for (const item of list){
-        const key = String(item.address || "");
-        if (!key) continue;
-        const existing = by.get(key);
-        if (!existing){
-          by.set(key, { ...item, sources: [source], showBuy: Boolean(item.showBuy) });
-        }else{
-          existing.sources = Array.from(new Set([...(existing.sources || []), source]));
-          existing.showBuy = Boolean(existing.showBuy || item.showBuy);
-          if (!existing.entryMc && item.entryMc) existing.entryMc = item.entryMc;
-          if (!existing.entryTs && item.entryTs) existing.entryTs = item.entryTs;
-          if (!existing.peakMc && item.peakMc) existing.peakMc = item.peakMc;
-          if (!existing.lastMc && item.lastMc) existing.lastMc = item.lastMc;
-          if (!existing.signal && item.signal) existing.signal = item.signal;
-          if (!existing.buyWhy && item.buyWhy) existing.buyWhy = item.buyWhy;
-        }
-      }
-    };
-
-    merge(smart, "Smart Money");
-    merge(whale, "Whale Alert");
-    merge(hot, "Hot Buys");
-    merge(signal, "Signal+");
-
-    const items = Array.from(by.values())
-      .sort((a,b)=>{
-        const buy = (b.showBuy ? 1 : 0) - (a.showBuy ? 1 : 0);
-        if (buy !== 0) return buy;
-        return (a.risk?.riskScore || 0) - (b.risk?.riskScore || 0);
-      })
-      .slice(0, 60);
-    updatePeaks(items);
-
-    res.json({ count: items.length, items });
+    const items = await getAllSignals(tf, potential);
+    const filtered = applyListQuery(items, req, { defaultLimit: 60, maxLimit: 120, tf });
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
@@ -948,8 +1082,50 @@ app.get("/api/list/all_signals", async (req,res)=>{
 
 app.get("/api/performance_history", (req,res)=>{
   try{
-    const items = perfHistory.listEntries();
-    res.json({ count: items.length, items, path: perfHistory.PERF_HISTORY_PATH });
+    const source = String(req.query.source || "").toLowerCase();
+    const status = String(req.query.status || "").toLowerCase();
+    const minRoiPct = numQuery(req.query.minRoiPct);
+    const maxRoiPct = numQuery(req.query.maxRoiPct);
+    const sortBy = String(req.query.sortBy || "lastSeen");
+
+    let entries = perfHistory.listEntries();
+    if (source) entries = entries.filter(entry => String(entry.source || "").toLowerCase() === source);
+    if (status) entries = entries.filter(entry => String(entry.status || "").toLowerCase() === status);
+    if (minRoiPct !== null) entries = entries.filter(entry => Number(entry.roiPct || 0) >= minRoiPct);
+    if (maxRoiPct !== null) entries = entries.filter(entry => Number(entry.roiPct || 0) <= maxRoiPct);
+
+    const summary = buildPerformanceSummary(entries);
+
+    entries = entries.map(entry => {
+      const nowTs = Date.now();
+      const entryTs = Number(entry.entryTs || entry.firstSeen || nowTs);
+      const lastSeen = Number(entry.lastSeen || nowTs);
+      return {
+        ...entry,
+        ageMs: Math.max(0, nowTs - Number(entry.firstSeen || entryTs)),
+        liveMs: Math.max(0, lastSeen - entryTs)
+      };
+    });
+
+    if (sortBy === "roiPct") entries.sort((a,b)=> (b.roiPct || 0) - (a.roiPct || 0));
+    else if (sortBy === "entryMc") entries.sort((a,b)=> (b.entryMc || 0) - (a.entryMc || 0));
+    else entries.sort((a,b)=> (b.lastSeen || 0) - (a.lastSeen || 0));
+
+    const total = entries.length;
+    const limitRaw = numQuery(req.query.limit);
+    const offsetRaw = numQuery(req.query.offset);
+    const limit = Math.max(1, Math.min(200, limitRaw === null ? 60 : Math.floor(limitRaw)));
+    const offset = Math.max(0, offsetRaw === null ? 0 : Math.floor(offsetRaw));
+    const paged = entries.slice(offset, offset + limit);
+
+    res.json({
+      count: paged.length,
+      total,
+      items: paged,
+      summary,
+      meta: { total, limit, offset },
+      path: perfHistory.PERF_HISTORY_PATH
+    });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
@@ -965,11 +1141,48 @@ app.get("/api/list/boosted", async (req,res)=>{
       .map(x => ({...x, liq: safeNum(x.bestPair?.liquidity?.usd), vol24: safeNum(x.bestPair?.volume?.h24)}))
       .sort((a,b)=> (b.liq - a.liq) || (b.vol24 - a.vol24))
       .slice(0, 30);
-    updatePeaks(items);
-    res.json({ count: items.length, items });
+    const filtered = applyListQuery(items, req, { defaultLimit: 30, maxLimit: 100 });
+    updatePeaks(filtered.items);
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
+});
+
+app.get("/api/stream/signals", async (req,res)=>{
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  const tf = String(req.query.tf || "15m");
+  const potential = String(req.query.potential || "MED");
+  const intervalRaw = numQuery(req.query.intervalMs);
+  const intervalMs = Math.max(5000, Math.min(60000, intervalRaw === null ? 15000 : Math.floor(intervalRaw)));
+
+  const sendSnapshot = async ()=>{
+    try{
+      const items = await getAllSignals(tf, potential);
+      const filtered = applyListQuery(items, req, { defaultLimit: 60, maxLimit: 120, tf });
+      const payload = {
+        ts: now(),
+        count: filtered.items.length,
+        items: filtered.items,
+        meta: filtered.meta
+      };
+      res.write(`event: signals\ndata: ${JSON.stringify(payload)}\n\n`);
+    }catch(e){
+      res.write(`event: error\ndata: ${JSON.stringify({ error: e.message })}\n\n`);
+    }
+  };
+
+  await sendSnapshot();
+  const timer = setInterval(sendSnapshot, intervalMs);
+  const pingTimer = setInterval(()=> res.write(": keep-alive\n\n"), 20000);
+
+  req.on("close", ()=>{
+    clearInterval(timer);
+    clearInterval(pingTimer);
+  });
 });
 
 

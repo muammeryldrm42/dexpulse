@@ -52,7 +52,7 @@ function mcCrashDetected(prevMc, curMc){
 }
 
 function isSignalTab(tab){
-  return tab === "uptrend" || tab === "smart" || tab === "whale" || tab === "hot";
+  return tab === "uptrend" || tab === "smart" || tab === "whale" || tab === "hot" || tab === "all_signals";
 }
 
 function fmtUSD(n){
@@ -100,6 +100,8 @@ function currentListEndpoint(){
   if (activeTab === "majors") return `/api/list/majors?tf=${encodeURIComponent(tf)}`;
   if (activeTab === "trending") return `/api/list/trending_low_risk?tf=${encodeURIComponent(tf)}`;
   if (activeTab === "uptrend") return `/api/list/uptrend_signal?tf=${encodeURIComponent(tf)}&potential=${encodeURIComponent(potentialFilter)}`;
+  if (activeTab === "all_signals") return `/api/list/all_signals?tf=${encodeURIComponent(tf)}`;
+  if (activeTab === "performance") return `/api/performance_history`;
   if (activeTab === "smart") return `/api/list/smart_money?tf=${encodeURIComponent(tf)}`;
   if (activeTab === "whale") return `/api/list/whale_alert?tf=${encodeURIComponent(tf)}`;
   if (activeTab === "hot") return `/api/list/hot_buys?tf=${encodeURIComponent(tf)}`;
@@ -113,6 +115,55 @@ function currentListEndpoint(){
 function applyRiskFilter(items){
   if (riskFilter !== "low") return items;
   return items.filter(x => (x?.risk?.riskLabel === "LOW"));
+}
+
+function renderPerformanceHistory(items){
+  const grid = $("#grid");
+  grid.innerHTML = "";
+  if (!items || items.length === 0){
+    grid.innerHTML = `<div class="card muted">No performance history yet.</div>`;
+    return;
+  }
+
+  for (const it of items){
+    const entryMc = Number(it.entryMc || 0);
+    const peakMc = Number(it.peakMc || 0);
+    const roiPct = Number(it.roiPct || 0);
+    const roiX = Number(it.roiX || 0);
+    const status = String(it.status || "active");
+    const note = String(it.notes || "");
+
+    const pills = [
+      `<span class="pill">${it.source || "Signal"}</span>`,
+      `<span class="pill">${status.toUpperCase()}</span>`
+    ];
+    if (roiX > 0) pills.push(`<span class="pill buy">ROI ${roiX}x</span>`);
+
+    const card = document.createElement("div");
+    card.className = "card tokenCard";
+    card.innerHTML = `
+      <div class="row">
+        <div class="left">
+          <div class="logo">${logoHtml(it.logo, it.symbol)}</div>
+          <div class="title">
+            <div class="name" title="${(it.name||"").replaceAll('"','')}">${it.name || "Token"}</div>
+            <div class="sym">${it.symbol || ""}</div>
+          </div>
+        </div>
+        <div class="pills">${pills.join("")}</div>
+      </div>
+
+      <div class="metrics">
+        <div class="kv"><div class="k">Entry MC</div><div class="v">${fmtUSD(entryMc)}</div></div>
+        <div class="kv"><div class="k">Peak MC</div><div class="v">${fmtUSD(peakMc)}</div></div>
+        <div class="kv"><div class="k">ROI %</div><div class="v">${pct(roiPct)}</div></div>
+        <div class="kv"><div class="k">ROI X</div><div class="v">${roiX ? `${roiX}x` : "—"}</div></div>
+      </div>
+      ${note ? `<div class="small muted" style="margin-top:8px">${note}</div>` : ""}
+    `;
+    if (it.address) card.addEventListener("click", ()=>openDetail(it.address));
+    grid.appendChild(card);
+  }
 }
 
 function renderCards(items){
@@ -172,11 +223,17 @@ function renderCards(items){
         if (ok) pills.push(`<span class="pill buy">BUY</span>`);
       }
     }
+    if (activeTab !== "uptrend" && isSignalTab(activeTab) && it.showBuy){
+      pills.push(`<span class="pill buy">BUY</span>`);
+    }
     if (activeTab === "smart" && it.smart?.smartLabel && it.smart.smartLabel !== "NONE"){
       pills.push(`<span class="pill">SMART ${it.smart.smartLabel}</span>`);
     }
     if (activeTab === "whale" && it.whale?.whaleLabel && it.whale.whaleLabel !== "NONE"){
       pills.push(`<span class="pill">WHALE ${it.whale.whaleLabel}</span>`);
+    }
+    if (activeTab === "all_signals" && Array.isArray(it.sources) && it.sources.length){
+      pills.push(`<span class="pill">SRC ${it.sources.join(" / ")}</span>`);
     }
 
     const card = document.createElement("div");
@@ -248,7 +305,7 @@ async function openDetail(address){
       return `<div class="warnItem ${cls}">${w.text}</div>`;
     }).join("");
 
-    const buyBadge = (showSignals && activeTab === "uptrend" && pot.buy) ? `<span class="pill buy">BUY</span>` : "";
+    const buyBadge = (showSignals && isSignalTab(activeTab) && pot.buy) ? `<span class="pill buy">BUY</span>` : "";
 
     $("#detail").innerHTML = `
       <div class="detailHead">
@@ -326,8 +383,13 @@ async function loadList(){
     const endpoint = currentListEndpoint();
     const data = await api(endpoint);
     const items = data.items || [];
-    renderCards(items);
-    setStatus(`Showing ${items.length} tokens`);
+    if (activeTab === "performance"){
+      renderPerformanceHistory(items);
+      setStatus(`Showing ${items.length} entries`);
+    }else{
+      renderCards(items);
+      setStatus(`Showing ${items.length} tokens`);
+    }
   }catch(e){
     setStatus("");
     $("#grid").innerHTML = `<div class="card"><div class="muted">Failed to load list.</div><div class="small" style="margin-top:8px;color:#fca5a5">${String(e.message||e)}</div></div>`;

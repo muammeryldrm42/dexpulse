@@ -153,6 +153,13 @@ function trackBuySignals(items, source){
     if (!item?.showBuy) continue;
     const mc = item?.bestPair?.marketCap;
     perfHistory.recordBuySignal({ address: item.address, source, ident: item.ident, mc });
+    const entry = perfHistory.getEntry(item.address, source);
+    if (entry?.entryMc > 0){
+      item.entryMc = entry.entryMc;
+      item.peakMc = entry.peakMc;
+      item.lastMc = entry.lastMc;
+      item.signal = entry.signal || "BUY";
+    }
   }
 }
 
@@ -901,6 +908,10 @@ app.get("/api/list/all_signals", async (req,res)=>{
         }else{
           existing.sources = Array.from(new Set([...(existing.sources || []), source]));
           existing.showBuy = Boolean(existing.showBuy || item.showBuy);
+          if (!existing.entryMc && item.entryMc) existing.entryMc = item.entryMc;
+          if (!existing.peakMc && item.peakMc) existing.peakMc = item.peakMc;
+          if (!existing.lastMc && item.lastMc) existing.lastMc = item.lastMc;
+          if (!existing.signal && item.signal) existing.signal = item.signal;
           if (!existing.buyWhy && item.buyWhy) existing.buyWhy = item.buyWhy;
         }
       }

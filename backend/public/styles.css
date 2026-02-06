@@ -38,9 +38,14 @@ h1{font-size:22px;margin:0;font-weight:800;letter-spacing:.2px}
 .layout{display:grid;grid-template-columns: 1.55fr .85fr;gap:14px}
 .status{color:var(--muted);font-size:12px;margin-bottom:10px;min-height:16px}
 .grid{display:grid;grid-template-columns: repeat(3, minmax(0, 1fr));gap:12px}
+.historyGrid{display:flex;flex-direction:column}
 @media(max-width:1180px){.grid{grid-template-columns: repeat(2, minmax(0, 1fr));}.layout{grid-template-columns:1fr}}
 @media(max-width:720px){.grid{grid-template-columns:1fr}.input{min-width:240px}}
 .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px}
+.historyItem{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.historyHead{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.historyName{background:none;border:0;color:var(--text);font-weight:900;font-size:14px;padding:0;cursor:pointer;text-align:left}
+.historyName:hover{text-decoration:underline}
 .tokenCard{cursor:pointer;transition:transform .05s ease}
 .tokenCard:hover{transform:translateY(-1px);border-color:#2b3b4f}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px}

@@ -109,7 +109,7 @@ function currentListEndpoint(){
   if (activeTab === "trending") return `/api/list/trending_low_risk?tf=${encodeURIComponent(tf)}`;
   if (activeTab === "uptrend") return `/api/list/uptrend_signal?tf=${encodeURIComponent(tf)}&potential=${encodeURIComponent(potentialFilter)}`;
   if (activeTab === "all_signals") return `/api/list/all_signals?tf=${encodeURIComponent(tf)}`;
-  if (activeTab === "performance") return `/api/performance_history`;
+  if (activeTab === "signal_history") return `/api/signal_history`;
   if (activeTab === "smart") return `/api/list/smart_money?tf=${encodeURIComponent(tf)}`;
   if (activeTab === "whale") return `/api/list/whale_alert?tf=${encodeURIComponent(tf)}`;
   if (activeTab === "hot") return `/api/list/hot_buys?tf=${encodeURIComponent(tf)}`;
@@ -125,60 +125,36 @@ function applyRiskFilter(items){
   return items.filter(x => (x?.risk?.riskLabel === "LOW"));
 }
 
-function renderPerformanceHistory(items){
+function renderSignalHistory(items){
   const grid = $("#grid");
+  grid.classList.add("historyGrid");
   grid.innerHTML = "";
   if (!items || items.length === 0){
-    grid.innerHTML = `<div class="card muted">No performance history yet.</div>`;
+    grid.innerHTML = `<div class="card muted">No signal history yet.</div>`;
     return;
   }
 
   for (const it of items){
-    const entryMc = Number(it.entryMc || 0);
-    const peakMc = Number(it.peakMc || 0);
-    const roiPct = Number(it.roiPct || 0);
-    const roiX = Number(it.roiX || 0);
-    const status = String(it.status || "active");
-    const note = String(it.notes || "");
-    const signal = String(it.signal || "");
-    const showBuy = signal === "BUY" || entryMc > 0;
-
-    const pills = [
-      `<span class="pill">${formatSourceLabel(it.source || "Signal")}</span>`,
-      `<span class="pill">${status.toUpperCase()}</span>`
-    ];
-    if (showBuy) pills.push(`<span class="pill buy">BUY</span>`);
-    if (roiX > 0) pills.push(`<span class="pill buy">ROI ${roiX}x</span>`);
-
-    const card = document.createElement("div");
-    card.className = "card tokenCard";
-    card.innerHTML = `
-      <div class="row">
-        <div class="left">
-          <div class="logo">${logoHtml(it.logo, it.symbol)}</div>
-          <div class="title">
-            <div class="name" title="${(it.name||"").replaceAll('"','')}">${it.name || "Token"}</div>
-            <div class="sym">${it.symbol || ""}</div>
-          </div>
-        </div>
-        <div class="pills">${pills.join("")}</div>
+    const item = document.createElement("div");
+    item.className = "historyItem";
+    item.innerHTML = `
+      <div class="historyHead">
+        <button class="historyName" data-address="${it.address || ""}">${it.name || "Token"} ${it.symbol ? `(${it.symbol})` : ""}</button>
+        <span class="pill">${formatSourceLabel(it.source || "Signal")}</span>
       </div>
-
-      <div class="metrics">
-        <div class="kv"><div class="k">Entry MC</div><div class="v">${fmtUSD(entryMc)}</div></div>
-        <div class="kv"><div class="k">Peak MC</div><div class="v">${fmtUSD(peakMc)}</div></div>
-        <div class="kv"><div class="k">ROI %</div><div class="v">${pct(roiPct)}</div></div>
-        <div class="kv"><div class="k">ROI X</div><div class="v">${roiX ? `${roiX}x` : "—"}</div></div>
-      </div>
-      ${note ? `<div class="small muted" style="margin-top:8px">${note}</div>` : ""}
     `;
-    if (it.address) card.addEventListener("click", ()=>openDetail(it.address));
-    grid.appendChild(card);
+    const btn = item.querySelector(".historyName");
+    if (btn && it.address) btn.addEventListener("click", (event)=>{
+      event.stopPropagation();
+      openDetail(it.address);
+    });
+    grid.appendChild(item);
   }
 }
 
 function renderCards(items){
   const grid = $("#grid");
+  grid.classList.remove("historyGrid");
   grid.innerHTML = "";
   const filtered = applyRiskFilter(items);
 
@@ -204,7 +180,6 @@ function renderCards(items){
     const liq = p?.liquidity?.usd;
     const vol24 = p?.volume?.h24;
     const mc = p?.marketCap;
-    const entryMc = Number(it.entryMc || 0);
 
     const change = (tf === "5m" ? p?.priceChange?.m5 : tf==="10m" ? (0.6*(p?.priceChange?.m5||0)+0.4*(p?.priceChange?.m15||0)) : tf==="15m" ? p?.priceChange?.m15 : tf==="1h"?p?.priceChange?.h1 : tf==="4h"?p?.priceChange?.h4 : tf==="1d"?p?.priceChange?.h24 : p?.priceChange?.m15);
 
@@ -229,14 +204,6 @@ function renderCards(items){
     if (it.dump?.dumpRisk) pills.push(`<span class="pill">DUMP ${it.dump.dumpRisk}</span>`);
     if (activeTab === "uptrend" && it.potential){
       pills.push(`<span class="pill">POTENTIAL ${it.potential.potential}</span>`);
-      if (it.showBuy){
-        const last = cooldown.get(it.address) || 0;
-        const ok = (Date.now() - last) > 45*60*1000;
-        if (ok) pills.push(`<span class="pill buy">BUY</span>`);
-      }
-    }
-    if (activeTab !== "uptrend" && isSignalTab(activeTab) && it.showBuy){
-      pills.push(`<span class="pill buy">BUY</span>`);
     }
     if (activeTab === "smart" && it.smart?.smartLabel && it.smart.smartLabel !== "NONE"){
       pills.push(`<span class="pill">SMART ${it.smart.smartLabel}</span>`);
@@ -268,7 +235,6 @@ function renderCards(items){
         <div class="kv"><div class="k">Liquidity</div><div class="v">${fmtUSD(liq)}</div></div>
         <div class="kv"><div class="k">Vol (24h)</div><div class="v">${fmtUSD(vol24)}</div></div>
         <div class="kv"><div class="k">MC</div><div class="v">${fmtUSD(mc)}</div></div>
-        ${(it.signal === "BUY" || entryMc > 0) ? `<div class="kv"><div class="k">Entry MC</div><div class="v">${fmtUSD(entryMc)}</div></div>` : ""}
         <div class="kv"><div class="k">DEX</div><div class="v">${(p?.dexId || "—").toUpperCase?.() || "—"}</div></div>
       </div>
     `;
@@ -300,7 +266,6 @@ async function openDetail(address){
     const whale = data.whale || {};
     const smart = data.smart || {};
     const warnings = data.warnings || [];
-    const signalEntry = data.signalEntry || null;
 
     if (activeTab === "uptrend" && pot.buy){
       cooldown.set(address, Date.now());
@@ -319,13 +284,11 @@ async function openDetail(address){
       return `<div class="warnItem ${cls}">${w.text}</div>`;
     }).join("");
 
-    const buyBadge = (showSignals && isSignalTab(activeTab) && pot.buy) ? `<span class="pill buy">BUY</span>` : "";
-
     $("#detail").innerHTML = `
       <div class="detailHead">
         <div class="logo">${logoHtml(ident.logo, ident.symbol)}</div>
         <div class="title" style="min-width:0">
-          <div class="name">${ident.name || "Token"} ${buyBadge}</div>
+          <div class="name">${ident.name || "Token"}</div>
           <div class="sym">${ident.symbol || ""}</div>
           <div class="small muted" style="margin-top:4px;word-break:break-all">${ident.address || ""}</div>
         </div>
@@ -350,7 +313,6 @@ async function openDetail(address){
         <div class="kv"><div class="k">Liquidity</div><div class="v">${fmtUSD(p?.liquidity?.usd)}</div></div>
         <div class="kv"><div class="k">Vol (24h)</div><div class="v">${fmtUSD(p?.volume?.h24)}</div></div>
         <div class="kv"><div class="k">MC</div><div class="v">${fmtUSD(p?.marketCap)}</div></div>
-        <div class="kv"><div class="k">Signal MC</div><div class="v">${signalEntry?.entryMc ? fmtUSD(signalEntry.entryMc) : "—"}</div></div>
         <div class="kv"><div class="k">Buys/Sells (15m)</div><div class="v">${fmtNum(p?.txns?.m15?.buys)} / ${fmtNum(p?.txns?.m15?.sells)}</div></div>
       </div>
 
@@ -398,9 +360,9 @@ async function loadList(){
     const endpoint = currentListEndpoint();
     const data = await api(endpoint);
     const items = data.items || [];
-    if (activeTab === "performance"){
-      renderPerformanceHistory(items);
-      setStatus(`Showing ${items.length} entries`);
+    if (activeTab === "signal_history"){
+      renderSignalHistory(items);
+      setStatus(`Showing ${items.length} signals`);
     }else{
       renderCards(items);
       setStatus(`Showing ${items.length} tokens`);

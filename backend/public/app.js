@@ -83,6 +83,14 @@ function riskPill(label){
   if (label === "MED") return "pill riskMed";
   return "pill riskHigh";
 }
+function formatSourceLabel(source){
+  const raw = String(source || "");
+  if (raw === "smart_money") return "Smart Money";
+  if (raw === "whale") return "Whale Alert";
+  if (raw === "hot_buys") return "Hot Buys";
+  if (raw === "signal_plus") return "Signal+";
+  return raw;
+}
 function logoHtml(url, symbol){
   if (url) return `<img src="${url}" alt="logo" onerror="this.style.display='none'; this.parentElement.textContent='${(symbol||'?').slice(0,1)}';">`;
   return (symbol||"?").slice(0,1);
@@ -132,11 +140,14 @@ function renderPerformanceHistory(items){
     const roiX = Number(it.roiX || 0);
     const status = String(it.status || "active");
     const note = String(it.notes || "");
+    const signal = String(it.signal || "");
+    const showBuy = signal === "BUY" || entryMc > 0;
 
     const pills = [
-      `<span class="pill">${it.source || "Signal"}</span>`,
+      `<span class="pill">${formatSourceLabel(it.source || "Signal")}</span>`,
       `<span class="pill">${status.toUpperCase()}</span>`
     ];
+    if (showBuy) pills.push(`<span class="pill buy">BUY</span>`);
     if (roiX > 0) pills.push(`<span class="pill buy">ROI ${roiX}x</span>`);
 
     const card = document.createElement("div");
@@ -193,6 +204,7 @@ function renderCards(items){
     const liq = p?.liquidity?.usd;
     const vol24 = p?.volume?.h24;
     const mc = p?.marketCap;
+    const entryMc = Number(it.entryMc || 0);
 
     const change = (tf === "5m" ? p?.priceChange?.m5 : tf==="10m" ? (0.6*(p?.priceChange?.m5||0)+0.4*(p?.priceChange?.m15||0)) : tf==="15m" ? p?.priceChange?.m15 : tf==="1h"?p?.priceChange?.h1 : tf==="4h"?p?.priceChange?.h4 : tf==="1d"?p?.priceChange?.h24 : p?.priceChange?.m15);
 
@@ -256,6 +268,7 @@ function renderCards(items){
         <div class="kv"><div class="k">Liquidity</div><div class="v">${fmtUSD(liq)}</div></div>
         <div class="kv"><div class="k">Vol (24h)</div><div class="v">${fmtUSD(vol24)}</div></div>
         <div class="kv"><div class="k">MC</div><div class="v">${fmtUSD(mc)}</div></div>
+        ${(it.signal === "BUY" || entryMc > 0) ? `<div class="kv"><div class="k">Entry MC</div><div class="v">${fmtUSD(entryMc)}</div></div>` : ""}
         <div class="kv"><div class="k">DEX</div><div class="v">${(p?.dexId || "—").toUpperCase?.() || "—"}</div></div>
       </div>
     `;

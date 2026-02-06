@@ -3,6 +3,40 @@ const path = require("path");
 
 const PERF_HISTORY_PATH = process.env.PERF_HISTORY_PATH || "/var/data/performance_history.json";
 
+const SOURCE_ALIASES = {
+  smart_money: ["Smart Money"],
+  whale: ["Whale Alert"],
+  hot_buys: ["Hot Buys"],
+  signal_plus: ["Signal+"]
+};
+
+function normalizeSource(source){
+  const raw = String(source || "").trim();
+  const lower = raw.toLowerCase();
+  if (lower === "smart money" || lower === "smart_money") return "smart_money";
+  if (lower === "whale alert" || lower === "whale") return "whale";
+  if (lower === "hot buys" || lower === "hot_buys") return "hot_buys";
+  if (lower === "signal+" || lower === "signal_plus") return "signal_plus";
+  return raw;
+}
+
+function findEntry(address, source){
+  const addr = String(address || "");
+  const normalized = normalizeSource(source);
+  const canonicalKey = `${addr}:${normalized}`;
+  if (history.entries[canonicalKey]){
+    return { entry: history.entries[canonicalKey], key: canonicalKey, normalized };
+  }
+  const aliases = SOURCE_ALIASES[normalized] || [];
+  for (const alias of aliases){
+    const legacyKey = `${addr}:${alias}`;
+    if (history.entries[legacyKey]){
+      return { entry: history.entries[legacyKey], key: legacyKey, normalized };
+    }
+  }
+  return { entry: null, key: canonicalKey, normalized };
+}
+
 function loadJsonFile(filePath, fallback){
   try{
     if (!fs.existsSync(filePath)) return fallback;
@@ -47,13 +81,21 @@ function computeRoi(entry){
 
 function recordBuySignal({ address, source, ident, mc }){
   const addr = String(address || "");
-  const src = String(source || "");
+  const src = normalizeSource(source);
   const entryMc = Number(mc || 0);
   if (!addr || !src || entryMc <= 0) return;
 
   const key = `${addr}:${src}`;
   const now = Date.now();
-  const existing = history.entries[key];
+  const found = findEntry(addr, src);
+  let existing = found.entry;
+
+  if (existing && found.key !== key){
+    delete history.entries[found.key];
+    existing.id = key;
+    existing.source = src;
+    history.entries[key] = existing;
+  }
 
   if (!existing){
     const entry = {
@@ -63,8 +105,10 @@ function recordBuySignal({ address, source, ident, mc }){
       name: ident?.name || "Token",
       symbol: ident?.symbol || "",
       logo: ident?.logo || "",
+      signal: "BUY",
       entryMc,
       peakMc: entryMc,
+      lastMc: entryMc,
       roiPct: 0,
       roiX: 1,
       status: "active",
@@ -82,12 +126,13 @@ function recordBuySignal({ address, source, ident, mc }){
   existing.name = ident?.name || existing.name;
   existing.symbol = ident?.symbol || existing.symbol;
   existing.logo = ident?.logo || existing.logo;
+  existing.signal = "BUY";
+  existing.source = src || existing.source;
   if (!existing.entryMc || existing.entryMc <= 0){
     existing.entryMc = entryMc;
   }
-  if (entryMc > Number(existing.peakMc || 0)){
-    existing.peakMc = entryMc;
-  }
+  existing.lastMc = entryMc;
+  existing.peakMc = Math.max(Number(existing.peakMc || 0), entryMc);
   computeRoi(existing);
   scheduleSave();
 }
@@ -100,13 +145,17 @@ function updatePeak(address, mc){
 
   Object.values(history.entries).forEach(entry => {
     if (entry.address !== addr) return;
+    entry.lastSeen = Date.now();
+    entry.lastMc = curMc;
+    if (!entry.signal && Number(entry.entryMc || 0) > 0) entry.signal = "BUY";
     if (curMc > Number(entry.peakMc || 0)){
       entry.peakMc = curMc;
-      entry.lastSeen = Date.now();
       if (entry.status === "removed" && entry.notes && !entry.notes.includes("Peak updated after removal")){
         entry.notes = `${entry.notes} Peak updated after removal.`.trim();
       }
       computeRoi(entry);
+      changed = true;
+    }else{
       changed = true;
     }
   });
@@ -134,11 +183,17 @@ function markRemoved(address, reason){
 }
 
 function listEntries(){
-  return Object.values(history.entries).sort((a,b)=> (b.lastSeen || 0) - (a.lastSeen || 0));
+  return Object.values(history.entries)
+    .map(entry => {
+      if (!entry.signal && Number(entry.entryMc || 0) > 0) entry.signal = "BUY";
+      return entry;
+    })
+    .sort((a,b)=> (b.lastSeen || 0) - (a.lastSeen || 0));
 }
 
 module.exports = {
   recordBuySignal,
+  getEntry: (address, source) => findEntry(address, source).entry,
   updatePeak,
   markRemoved,
   listEntries,

@@ -300,6 +300,7 @@ async function openDetail(address){
     const whale = data.whale || {};
     const smart = data.smart || {};
     const warnings = data.warnings || [];
+    const signalEntry = data.signalEntry || null;
 
     if (activeTab === "uptrend" && pot.buy){
       cooldown.set(address, Date.now());
@@ -349,6 +350,7 @@ async function openDetail(address){
         <div class="kv"><div class="k">Liquidity</div><div class="v">${fmtUSD(p?.liquidity?.usd)}</div></div>
         <div class="kv"><div class="k">Vol (24h)</div><div class="v">${fmtUSD(p?.volume?.h24)}</div></div>
         <div class="kv"><div class="k">MC</div><div class="v">${fmtUSD(p?.marketCap)}</div></div>
+        <div class="kv"><div class="k">Signal MC</div><div class="v">${signalEntry?.entryMc ? fmtUSD(signalEntry.entryMc) : "—"}</div></div>
         <div class="kv"><div class="k">Buys/Sells (15m)</div><div class="v">${fmtNum(p?.txns?.m15?.buys)} / ${fmtNum(p?.txns?.m15?.sells)}</div></div>
       </div>
 

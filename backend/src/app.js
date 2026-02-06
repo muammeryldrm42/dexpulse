@@ -640,6 +640,7 @@ async function tokenDetail(address, tf){
   const whale = computeWhaleLike(bestPair);
   const smart = computeSmartMoney(bestPair);
   const pot = computePotential(bestPair, tf);
+  const signalEntry = perfHistory.getLatestEntry(address);
 
   const warnings = [];
   if (risk.flags.includes("LOW_LIQUIDITY") || risk.flags.includes("VERY_LOW_LIQUIDITY") || risk.flags.includes("MICRO_LIQUIDITY")) warnings.push({ level:"warn", text:"Low liquidity — price can be manipulated easily." });
@@ -649,7 +650,26 @@ async function tokenDetail(address, tf){
   if (risk.flags.includes("ANOMALOUS_FLOW")) warnings.push({ level:"warn", text:"Anomalous flow — unusually one-sided tape (bots/wash possible)." });
   if (warnings.length === 0) warnings.push({ level:"ok", text:"No major red flags detected by heuristics (still DYOR)." });
 
-  return { address, ident, bestPair, risk, dump, whale, smart, potential: pot, pairs: pairs.slice(0, 25), warnings };
+  return {
+    address,
+    ident,
+    bestPair,
+    risk,
+    dump,
+    whale,
+    smart,
+    potential: pot,
+    signalEntry: signalEntry
+      ? {
+          source: signalEntry.source || "",
+          entryMc: Number(signalEntry.entryMc || 0),
+          entryTs: Number(signalEntry.entryTs || 0),
+          signal: signalEntry.signal || ""
+        }
+      : null,
+    pairs: pairs.slice(0, 25),
+    warnings
+  };
 }
 
 // Jupiter token list (verified mints + logos) — used to resolve majors without hardcoding every mint.

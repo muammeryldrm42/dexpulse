@@ -79,6 +79,25 @@ function computeRoi(entry){
   }
 }
 
+function ensureHistoryNotes(entry){
+  if (!Array.isArray(entry.historyNotes)) entry.historyNotes = [];
+  if (!Number.isFinite(Number(entry.milestoneX))) entry.milestoneX = 1;
+}
+
+function addMilestoneNotes(entry, prevMilestone){
+  const currentMilestone = Math.floor(Number(entry.roiX || 0));
+  if (currentMilestone < 2 || currentMilestone <= prevMilestone) return false;
+  for (let m = prevMilestone + 1; m <= currentMilestone; m += 1){
+    entry.historyNotes.push({
+      ts: Date.now(),
+      roiX: m,
+      text: `${m}x (+${(m - 1) * 100}%) reached.`
+    });
+  }
+  entry.milestoneX = currentMilestone;
+  return true;
+}
+
 function recordBuySignal({ address, source, ident, mc }){
   const addr = String(address || "");
   const src = normalizeSource(source);
@@ -114,6 +133,8 @@ function recordBuySignal({ address, source, ident, mc }){
       roiX: 1,
       status: "active",
       notes: "",
+      historyNotes: [],
+      milestoneX: 1,
       firstSeen: now,
       lastSeen: now
     };
@@ -129,6 +150,7 @@ function recordBuySignal({ address, source, ident, mc }){
   existing.logo = ident?.logo || existing.logo;
   existing.signal = "BUY";
   existing.source = src || existing.source;
+  ensureHistoryNotes(existing);
   if (!existing.entryMc || existing.entryMc <= 0){
     existing.entryMc = entryMc;
   }
@@ -151,6 +173,8 @@ function updatePeak(address, mc){
     if (entry.address !== addr) return;
     entry.lastSeen = Date.now();
     entry.lastMc = curMc;
+    ensureHistoryNotes(entry);
+    const prevMilestone = Number(entry.milestoneX || 1);
     if (!entry.signal && Number(entry.entryMc || 0) > 0) entry.signal = "BUY";
     if (curMc > Number(entry.peakMc || 0)){
       entry.peakMc = curMc;
@@ -158,8 +182,10 @@ function updatePeak(address, mc){
         entry.notes = `${entry.notes} Peak updated after removal.`.trim();
       }
       computeRoi(entry);
+      if (addMilestoneNotes(entry, prevMilestone)) changed = true;
       changed = true;
     }else{
+      if (addMilestoneNotes(entry, prevMilestone)) changed = true;
       changed = true;
     }
   });
@@ -190,6 +216,7 @@ function listEntries(){
   return Object.values(history.entries)
     .map(entry => {
       if (!entry.signal && Number(entry.entryMc || 0) > 0) entry.signal = "BUY";
+      ensureHistoryNotes(entry);
       return entry;
     })
     .sort((a,b)=> (b.lastSeen || 0) - (a.lastSeen || 0));

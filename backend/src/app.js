@@ -182,7 +182,7 @@ function passesQualityGate(bestPair, allowHighRisk = false){
 
 function trackBuySignals(items, source){
   for (const item of items){
-    if (!item?.showBuy) continue;
+    if (!item) continue;
     const mc = currentMarketCap(item?.bestPair);
     perfHistory.recordBuySignal({ address: item.address, source, ident: item.ident, mc });
     const entry = perfHistory.getEntry(item.address, source);
@@ -192,6 +192,8 @@ function trackBuySignals(items, source){
       item.peakMc = entry.peakMc;
       item.lastMc = entry.lastMc;
       item.signal = entry.signal || "BUY";
+      item.roiPct = entry.roiPct;
+      item.roiX = entry.roiX;
     }
   }
 }
@@ -625,6 +627,8 @@ async function getAllSignals(tf, potential){
         if (!existing.peakMc && item.peakMc) existing.peakMc = item.peakMc;
         if (!existing.lastMc && item.lastMc) existing.lastMc = item.lastMc;
         if (!existing.signal && item.signal) existing.signal = item.signal;
+        if (!existing.roiPct && item.roiPct) existing.roiPct = item.roiPct;
+        if (!existing.roiX && item.roiX) existing.roiX = item.roiX;
         if (!existing.buyWhy && item.buyWhy) existing.buyWhy = item.buyWhy;
       }
     }
@@ -1187,6 +1191,43 @@ app.get("/api/performance_history", (req,res)=>{
       summary,
       meta: { total, limit, offset },
       path: perfHistory.PERF_HISTORY_PATH
+    });
+  }catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/signal_history", (req,res)=>{
+  try{
+    const allowedSources = new Set(["smart_money", "whale", "hot_buys", "signal_plus"]);
+    let entries = perfHistory.listEntries()
+      .filter(entry => allowedSources.has(String(entry.source || "").toLowerCase()));
+
+    entries = entries.map(entry => {
+      const nowTs = Date.now();
+      const entryTs = Number(entry.entryTs || entry.firstSeen || nowTs);
+      const lastSeen = Number(entry.lastSeen || nowTs);
+      return {
+        ...entry,
+        ageMs: Math.max(0, nowTs - Number(entry.firstSeen || entryTs)),
+        liveMs: Math.max(0, lastSeen - entryTs)
+      };
+    });
+
+    entries.sort((a,b)=> (b.lastSeen || 0) - (a.lastSeen || 0));
+
+    const total = entries.length;
+    const limitRaw = numQuery(req.query.limit);
+    const offsetRaw = numQuery(req.query.offset);
+    const limit = Math.max(1, Math.min(200, limitRaw === null ? 120 : Math.floor(limitRaw)));
+    const offset = Math.max(0, offsetRaw === null ? 0 : Math.floor(offsetRaw));
+    const paged = entries.slice(offset, offset + limit);
+
+    res.json({
+      count: paged.length,
+      total,
+      items: paged,
+      meta: { total, limit, offset }
     });
   }catch(e){
     res.status(500).json({ error: e.message });

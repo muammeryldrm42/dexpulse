@@ -182,7 +182,7 @@ function passesQualityGate(bestPair, allowHighRisk = false){
 
 function trackBuySignals(items, source){
   for (const item of items){
-    if (!item?.showBuy) continue;
+    if (!item) continue;
     const mc = currentMarketCap(item?.bestPair);
     perfHistory.recordBuySignal({ address: item.address, source, ident: item.ident, mc });
     const entry = perfHistory.getEntry(item.address, source);
@@ -192,6 +192,8 @@ function trackBuySignals(items, source){
       item.peakMc = entry.peakMc;
       item.lastMc = entry.lastMc;
       item.signal = entry.signal || "BUY";
+      item.roiPct = entry.roiPct;
+      item.roiX = entry.roiX;
     }
   }
 }
@@ -625,6 +627,8 @@ async function getAllSignals(tf, potential){
         if (!existing.peakMc && item.peakMc) existing.peakMc = item.peakMc;
         if (!existing.lastMc && item.lastMc) existing.lastMc = item.lastMc;
         if (!existing.signal && item.signal) existing.signal = item.signal;
+        if (!existing.roiPct && item.roiPct) existing.roiPct = item.roiPct;
+        if (!existing.roiX && item.roiX) existing.roiX = item.roiX;
         if (!existing.buyWhy && item.buyWhy) existing.buyWhy = item.buyWhy;
       }
     }

@@ -107,6 +107,7 @@ function recordBuySignal({ address, source, ident, mc }){
       logo: ident?.logo || "",
       signal: "BUY",
       entryMc,
+      entryTs: now,
       peakMc: entryMc,
       lastMc: entryMc,
       roiPct: 0,
@@ -130,6 +131,9 @@ function recordBuySignal({ address, source, ident, mc }){
   existing.source = src || existing.source;
   if (!existing.entryMc || existing.entryMc <= 0){
     existing.entryMc = entryMc;
+  }
+  if (!existing.entryTs){
+    existing.entryTs = now;
   }
   existing.lastMc = entryMc;
   existing.peakMc = Math.max(Number(existing.peakMc || 0), entryMc);

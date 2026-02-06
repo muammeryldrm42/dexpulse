@@ -1,6 +1,8 @@
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const fs = require("fs");
+const perfHistory = require("./performanceHistory");
 global.fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
 const app = express();
@@ -20,11 +22,13 @@ function setCached(key, val, ttlMs){
   return val;
 }
 
-// In-memory rug blacklist based on market-cap crashes.
-// Rule: if MC collapses ~10x (e.g., 100k -> 10k), blacklist permanently for this server runtime.
-// Frontend also keeps its own persistent blacklist in localStorage.
+// Persistent veto blacklist based on market-cap crashes and dump/rug-like behavior.
+// Rule: if MC collapses ~10x (e.g., 100k -> 10k), blacklist permanently.
+// Additional rule: auto-remove on fast ~70% MC dumps or rug-like liquidity wipes.
 const mcSeen = new Map(); // address -> { mc, liq, ts }
-const mcBlack = new Set();
+const VETO_PATH = process.env.VETO_PATH || "/var/data/veto_blacklist.json";
+const vetoStore = loadJsonFile(VETO_PATH, { items: {} });
+let vetoSaveTimer = null;
 
 // Smart-money continuity tracker (avoid one-tick spikes).
 const smartSeen = new Map(); // address -> { streak, lastScore, ts }
@@ -75,25 +79,88 @@ function safeNum(x){
 }
 
 function isMcBlacklisted(address){
-  return mcBlack.has(String(address||""));
+  return Boolean(vetoStore.items[String(address||"")]);
+}
+
+function setMcBlacklist(address, reason, meta){
+  const addr = String(address||"");
+  if (!addr) return;
+  if (vetoStore.items[addr]) return;
+  vetoStore.items[addr] = { ts: now(), reason, ...meta };
+  perfHistory.markRemoved(addr, reason);
+  scheduleVetoSave();
+  console.log(`[veto] ${addr} ${reason}`);
+}
+
+function scheduleVetoSave(){
+  if (vetoSaveTimer) return;
+  vetoSaveTimer = setTimeout(()=>{
+    vetoSaveTimer = null;
+    try{
+      fs.mkdirSync(path.dirname(VETO_PATH), { recursive: true });
+      fs.writeFileSync(VETO_PATH, JSON.stringify(vetoStore, null, 2));
+    }catch(_){}
+  }, 1500);
+}
+
+function loadJsonFile(filePath, fallback){
+  try{
+    if (!fs.existsSync(filePath)) return fallback;
+    const raw = fs.readFileSync(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") return parsed;
+  }catch(_){}
+  return fallback;
 }
 
 function updateMcCrash(address, bestPair){
   const addr = String(address||"");
   if (!addr || !bestPair) return false;
+  if (isMcBlacklisted(addr)) return true;
   const curMc = safeNum(bestPair?.marketCap);
   const curLiq = safeNum(bestPair?.liquidity?.usd);
   const prev = mcSeen.get(addr);
+  let reason = "";
   if (prev && prev.mc > 0 && curMc > 0){
     // 10x collapse rule, with a small floor to reduce noise.
     if (curMc <= (prev.mc / 10) && prev.mc >= 20000){
-      mcBlack.add(addr);
-      return true;
+      reason = "mc_crash";
+    }else if ((now() - prev.ts) <= 60 * 60 * 1000 && curMc <= (prev.mc * 0.3) && prev.mc >= 20000){
+      reason = "fast_dump";
+    }else if (prev.liq >= 5000 && curLiq > 0 && curLiq <= (prev.liq * 0.2) && curMc <= (prev.mc * 0.3)){
+      reason = "rug_like";
     }
   }
   // Track latest observation.
   if (curMc > 0 || curLiq > 0) mcSeen.set(addr, { mc: curMc, liq: curLiq, ts: now() });
+  if (reason){
+    setMcBlacklist(addr, reason, { prevMc: prev?.mc || 0, mc: curMc, prevLiq: prev?.liq || 0, liq: curLiq });
+    return true;
+  }
   return false;
+}
+
+function passesQualityGate(bestPair, allowHighRisk = false){
+  if (!bestPair) return false;
+  if (isTrash(bestPair)) return false;
+  if (allowHighRisk) return true;
+  const risk = computeRisk(bestPair);
+  return risk.riskLabel !== "HIGH";
+}
+
+function trackBuySignals(items, source){
+  for (const item of items){
+    if (!item?.showBuy) continue;
+    const mc = item?.bestPair?.marketCap;
+    perfHistory.recordBuySignal({ address: item.address, source, ident: item.ident, mc });
+  }
+}
+
+function updatePeaks(items){
+  for (const item of items){
+    const mc = item?.bestPair?.marketCap;
+    perfHistory.updatePeak(item.address, mc);
+  }
 }
 
 function normalizePair(p){
@@ -473,7 +540,8 @@ app.get("/api/token/:address", async (req,res)=>{
   }
 });
 
-async function boostedSeed(limit){
+async function boostedSeed(limit, options = {}){
+  const allowHighRisk = Boolean(options.allowHighRisk);
   const url = "https://api.dexscreener.com/token-boosts/top/v1";
   const raw = await fetchJson(url, 30000);
   const base = (Array.isArray(raw) ? raw : []).filter(x => x?.chainId === "solana").slice(0, limit);
@@ -487,7 +555,7 @@ async function boostedSeed(limit){
       const bestPair = pickBestPair(pairs);
       if (!bestPair) continue;
       if (updateMcCrash(addr, bestPair)) continue;
-      if (isTrash(bestPair)) continue;
+      if (!passesQualityGate(bestPair, allowHighRisk)) continue;
       const risk = computeRisk(bestPair);
       const dump = computeDumpRisk(bestPair);
       const whale = computeWhaleLike(bestPair);
@@ -513,136 +581,49 @@ async function mapLimit(arr, limit, fn){
   return ret.filter(Boolean);
 }
 
-app.get("/api/list/majors", async (req,res)=>{
-  try{
-    const tf = String(req.query.tf || "15m");
-    const majorsPath = path.join(__dirname, "..", "majors.json");
-    delete require.cache[require.resolve(majorsPath)];
-    const list = require(majorsPath);
-    const jupList = await getJupiterTokenList().catch(()=>[]);
-
-    const enriched = await mapLimit(list, 4, async (t)=>{
-      // Enforce user rule: no stablecoins / no staked-SOL wrappers in Majors list.
-      if (isStableSymbol(t.symbol) || isLSTSymbol(t.symbol)) return null;
-
-      const token = t.address ? null : pickJupiterToken(jupList, t.symbol, t.name);
-      const address = String(t.address || token?.address || "").trim();
-      if (!address) return null;
-
-      const pairs = await tokenPairs(address);
-      const bestPair = pickBestPair(pairs);
-      if (!bestPair) return { address, ident:{ address, name:t.name, symbol:t.symbol, logo: token?.logoURI || "" }, bestPair:null, risk:{ riskScore:85, riskLabel:"HIGH", flags:["NO_PAIR_DATA"] } };
-
-      const ident = { address, name: t.name || (bestPair?.baseToken?.name||"Token"), symbol: t.symbol || (bestPair?.baseToken?.symbol||""), logo: bestPair?.info?.imageUrl || token?.logoURI || "" };
-      const risk = computeRisk(bestPair);
-      const dump = computeDumpRisk(bestPair);
-      const pot = computePotential(bestPair, tf);
-      return { address, ident, bestPair, risk, dump, potential: pot };
+function buildSmartMoneyList(seed, tf){
+  const nowTs = now();
+  const withStreak = seed
+    .filter(x => !isMcBlacklisted(x.address))
+    .map(x => {
+      const smartScore = x.smart?.smartScore || 0;
+      const key = String(x.address||"");
+      const prev = smartSeen.get(key);
+      let streak = 0;
+      // Consider it a "valid tick" only if it clears basic quality.
+      const valid = smartScore >= 55 && x.risk.riskLabel !== "HIGH" && (x.dump?.dumpRisk||"LOW") !== "HIGH" && !x.risk.flags.includes("FALLING_KNIFE");
+      if (valid){
+        if (prev && (nowTs - prev.ts) < 120000 && prev.lastScore >= 55) streak = Math.min(5, (prev.streak || 1) + 1);
+        else streak = 1;
+        smartSeen.set(key, { streak, lastScore: smartScore, ts: nowTs });
+      }else{
+        if (prev && (nowTs - prev.ts) < 120000) streak = prev.streak || 0;
+      }
+      const potential = computePotential(x.bestPair, tf);
+      return { ...x, smartScore, smartStreak: streak, potential, showBuy: Boolean(potential.buy), buyWhy: potential.buyWhy };
     });
 
-    const items = enriched.filter(Boolean);
-    res.json({ count: items.length, items });
-  }catch(e){
-    res.status(500).json({ error: e.message });
-  }
-});
+  return withStreak
+    .filter(x => x.risk.riskLabel !== "HIGH")
+    // Stability gate: show immediately if very strong; otherwise require 2 ticks.
+    .filter(x => (x.smartScore >= 70) || (x.smartScore >= 55 && x.smartStreak >= 2))
+    .sort((a,b)=> (b.smartScore + (b.smartStreak>=2?6:0)) - (a.smartScore + (a.smartStreak>=2?6:0)))
+    .slice(0, 30);
+}
 
-app.get("/api/list/trending_low_risk", async (req,res)=>{
-  try{
-    const tf = String(req.query.tf || "15m");
-    const seed = await boostedSeed(28);
-    const items = seed
-      .filter(x => x?.bestPair && x?.risk?.riskLabel !== "HIGH")
-      .map(x => ({ ...x, trend: trendChange(x.bestPair, tf) }))
-      .sort((a,b)=> (a.risk.riskScore - b.risk.riskScore) || (b.trend - a.trend))
-      .slice(0, 30);
-    res.json({ count: items.length, items });
-  }catch(e){
-    res.status(500).json({ error: e.message });
-  }
-});
+function buildWhaleAlertList(seed, tf){
+  return seed
+    .map(x => {
+      const potential = computePotential(x.bestPair, tf);
+      return { ...x, whaleScore: x.whale?.whaleScore || 0, potential, showBuy: Boolean(potential.buy), buyWhy: potential.buyWhy };
+    })
+    .filter(x => x.whaleScore >= 45 && x.risk.riskLabel !== "HIGH")
+    .sort((a,b)=> (b.whaleScore - a.whaleScore))
+    .slice(0, 30);
+}
 
-app.get("/api/list/top_volume", async (req,res)=>{
-  try{
-    const seed = await boostedSeed(36);
-    const items = seed
-      .map(x => ({ ...x, vol24: safeNum(x.bestPair?.volume?.h24) }))
-      .sort((a,b)=> b.vol24 - a.vol24)
-      .slice(0, 30);
-    res.json({ count: items.length, items });
-  }catch(e){
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get("/api/list/high_liquidity", async (req,res)=>{
-  try{
-    const seed = await boostedSeed(36);
-    const items = seed
-      .map(x => ({ ...x, liq: safeNum(x.bestPair?.liquidity?.usd) }))
-      .sort((a,b)=> b.liq - a.liq)
-      .slice(0, 30);
-    res.json({ count: items.length, items });
-  }catch(e){
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get("/api/list/whale_alert", async (req,res)=>{
-  try{
-    const seed = await boostedSeed(40);
-    const items = seed
-      .map(x => ({ ...x, whaleScore: x.whale?.whaleScore || 0 }))
-      .filter(x => x.whaleScore >= 45 && x.risk.riskLabel !== "HIGH")
-      .sort((a,b)=> (b.whaleScore - a.whaleScore))
-      .slice(0, 30);
-    res.json({ count: items.length, items });
-  }catch(e){
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get("/api/list/smart_money", async (req,res)=>{
-  try{
-    const seed = await boostedSeed(42);
-    const nowTs = now();
-
-    const withStreak = seed
-      .filter(x => !isMcBlacklisted(x.address))
-      .map(x => {
-        const smartScore = x.smart?.smartScore || 0;
-        const key = String(x.address||"");
-        const prev = smartSeen.get(key);
-        let streak = 0;
-        // Consider it a "valid tick" only if it clears basic quality.
-        const valid = smartScore >= 55 && x.risk.riskLabel !== "HIGH" && (x.dump?.dumpRisk||"LOW") !== "HIGH" && !x.risk.flags.includes("FALLING_KNIFE");
-        if (valid){
-          if (prev && (nowTs - prev.ts) < 120000 && prev.lastScore >= 55) streak = Math.min(5, (prev.streak || 1) + 1);
-          else streak = 1;
-          smartSeen.set(key, { streak, lastScore: smartScore, ts: nowTs });
-        }else{
-          if (prev && (nowTs - prev.ts) < 120000) streak = prev.streak || 0;
-        }
-        return { ...x, smartScore, smartStreak: streak };
-      });
-
-    const items = withStreak
-      .filter(x => x.risk.riskLabel !== "HIGH")
-      // Stability gate: show immediately if very strong; otherwise require 2 ticks.
-      .filter(x => (x.smartScore >= 70) || (x.smartScore >= 55 && x.smartStreak >= 2))
-      .sort((a,b)=> (b.smartScore + (b.smartStreak>=2?6:0)) - (a.smartScore + (a.smartStreak>=2?6:0)))
-      .slice(0, 30);
-    res.json({ count: items.length, items });
-  }catch(e){
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get("/api/list/hot_buys", async (req,res)=>{
-  try{
-    const seed = await boostedSeed(42);
-    const items = seed
-    .filter(x => !isMcBlacklisted(x.address))
+function buildHotBuysList(seed, tf){
+  return seed
     .map(x=>{
       const b5 = safeNum(x.bestPair?.txns?.m5?.buys);
       const s5 = safeNum(x.bestPair?.txns?.m5?.sells);
@@ -671,7 +652,8 @@ app.get("/api/list/hot_buys", async (req,res)=>{
       if (dump.dumpRisk === "HIGH") score -= 40;
       if (x.risk.flags.includes("FALLING_KNIFE")) score -= 40;
 
-      return { ...x, hotScore: score, buyRatio, totalTx: total, dump };
+      const potential = computePotential(x.bestPair, tf);
+      return { ...x, hotScore: score, buyRatio, totalTx: total, dump, potential, showBuy: Boolean(potential.buy), buyWhy: potential.buyWhy };
     })
     .filter(x => x.totalTx >= 16 && x.buyRatio >= 0.62)
     .filter(x => x.risk.riskLabel !== "HIGH")
@@ -679,6 +661,183 @@ app.get("/api/list/hot_buys", async (req,res)=>{
     .filter(x => !x.risk.flags.includes("FALLING_KNIFE"))
     .sort((a,b)=> b.hotScore - a.hotScore)
     .slice(0, 30);
+}
+
+function buildSignalPlusList(seed, tf, potentialTier){
+  const items = seed.map(x=>{
+    const pot = computePotential(x.bestPair, tf);
+    return { ...x, potential: pot };
+  })
+  .filter(x => x?.bestPair && !isTrash(x.bestPair))
+  .filter(x => x.risk.riskLabel !== "HIGH")
+  // Stronger quality gates: avoid pump-to-dex dump patterns, manipulation risk, and ultra-thin liquidity.
+  .filter(x => {
+    const liq = safeNum(x.bestPair?.liquidity?.usd);
+    const flags = x.risk?.flags || [];
+    const dumpRisk = x.dump?.dumpRisk || computeDumpRisk(x.bestPair).dumpRisk;
+
+    // Hard vetoes
+    if (dumpRisk === "HIGH") return false;
+    if (flags.includes("MICRO_LIQUIDITY")) return false;
+    if (flags.includes("MANIPULATION_RISK")) return false;
+
+    // Potential-tier-specific gates
+    if (potentialTier === "HIGH"){
+      if (x.potential.potential !== "HIGH") return false;
+      if (x.risk.riskLabel !== "LOW") return false;
+      if (dumpRisk !== "LOW") return false;
+      if (flags.includes("VERY_LOW_LIQUIDITY") || flags.includes("LOW_LIQUIDITY")) return false;
+      if (flags.includes("ANOMALOUS_FLOW") || flags.includes("FALLING_KNIFE")) return false;
+      if (liq < 2500) return false;
+      return true;
+    }
+    if (potentialTier === "MED"){
+      if (!(x.potential.potential === "MED" || x.potential.potential === "HIGH")) return false;
+      if (x.risk.riskScore > 55) return false;
+      if (flags.includes("FALLING_KNIFE")) return false;
+      if (liq < 1800) return false;
+      return true;
+    }
+    // LOW potential: keep very strict to avoid rugs; it's ok if list is short.
+    if (potentialTier === "LOW"){
+      if (x.risk.riskScore > 65) return false;
+      if (dumpRisk !== "LOW") return false;
+      if (flags.includes("VERY_LOW_LIQUIDITY") || flags.includes("LOW_LIQUIDITY")) return false;
+      if (liq < 2200) return false;
+      return true;
+    }
+    return true;
+  })
+  .map(x => ({ ...x, showBuy: Boolean(x.potential.buy), buyWhy: x.potential.buyWhy }))
+  .filter(x => x.showBuy)
+  .sort((a,b)=>{
+    const pRank = (p)=> p==="HIGH"?3:p==="MED"?2:1;
+    const d = pRank(b.potential.potential) - pRank(a.potential.potential);
+    if (d !== 0) return d;
+    const r = a.risk.riskScore - b.risk.riskScore;
+    if (r !== 0) return r;
+    return trendChange(b.bestPair, tf) - trendChange(a.bestPair, tf);
+  })
+  .slice(0, 30);
+
+  return items;
+}
+
+app.get("/api/list/majors", async (req,res)=>{
+  try{
+    const tf = String(req.query.tf || "15m");
+    const majorsPath = path.join(__dirname, "..", "majors.json");
+    delete require.cache[require.resolve(majorsPath)];
+    const list = require(majorsPath);
+    const jupList = await getJupiterTokenList().catch(()=>[]);
+
+    const enriched = await mapLimit(list, 4, async (t)=>{
+      // Enforce user rule: no stablecoins / no staked-SOL wrappers in Majors list.
+      if (isStableSymbol(t.symbol) || isLSTSymbol(t.symbol)) return null;
+
+      const token = t.address ? null : pickJupiterToken(jupList, t.symbol, t.name);
+      const address = String(t.address || token?.address || "").trim();
+      if (!address) return null;
+      if (isMcBlacklisted(address)) return null;
+
+      const pairs = await tokenPairs(address);
+      const bestPair = pickBestPair(pairs);
+      if (!bestPair) return null;
+      if (updateMcCrash(address, bestPair)) return null;
+      if (!passesQualityGate(bestPair)) return null;
+
+      const ident = { address, name: t.name || (bestPair?.baseToken?.name||"Token"), symbol: t.symbol || (bestPair?.baseToken?.symbol||""), logo: bestPair?.info?.imageUrl || token?.logoURI || "" };
+      const risk = computeRisk(bestPair);
+      const dump = computeDumpRisk(bestPair);
+      const pot = computePotential(bestPair, tf);
+      return { address, ident, bestPair, risk, dump, potential: pot };
+    });
+
+    const items = enriched.filter(Boolean);
+    updatePeaks(items);
+    res.json({ count: items.length, items });
+  }catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/list/trending_low_risk", async (req,res)=>{
+  try{
+    const tf = String(req.query.tf || "15m");
+    const seed = await boostedSeed(28);
+    const items = seed
+      .filter(x => x?.bestPair && x?.risk?.riskLabel !== "HIGH")
+      .map(x => ({ ...x, trend: trendChange(x.bestPair, tf) }))
+      .sort((a,b)=> (a.risk.riskScore - b.risk.riskScore) || (b.trend - a.trend))
+      .slice(0, 30);
+    updatePeaks(items);
+    res.json({ count: items.length, items });
+  }catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/list/top_volume", async (req,res)=>{
+  try{
+    const seed = await boostedSeed(36);
+    const items = seed
+      .map(x => ({ ...x, vol24: safeNum(x.bestPair?.volume?.h24) }))
+      .sort((a,b)=> b.vol24 - a.vol24)
+      .slice(0, 30);
+    updatePeaks(items);
+    res.json({ count: items.length, items });
+  }catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/list/high_liquidity", async (req,res)=>{
+  try{
+    const seed = await boostedSeed(36);
+    const items = seed
+      .map(x => ({ ...x, liq: safeNum(x.bestPair?.liquidity?.usd) }))
+      .sort((a,b)=> b.liq - a.liq)
+      .slice(0, 30);
+    updatePeaks(items);
+    res.json({ count: items.length, items });
+  }catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/list/whale_alert", async (req,res)=>{
+  try{
+    const tf = String(req.query.tf || "15m");
+    const seed = await boostedSeed(40);
+    const items = buildWhaleAlertList(seed, tf);
+    updatePeaks(items);
+    trackBuySignals(items, "Whale Alert");
+    res.json({ count: items.length, items });
+  }catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/list/smart_money", async (req,res)=>{
+  try{
+    const tf = String(req.query.tf || "15m");
+    const seed = await boostedSeed(42);
+    const items = buildSmartMoneyList(seed, tf);
+    updatePeaks(items);
+    trackBuySignals(items, "Smart Money");
+    res.json({ count: items.length, items });
+  }catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/list/hot_buys", async (req,res)=>{
+  try{
+    const tf = String(req.query.tf || "15m");
+    const seed = await boostedSeed(42);
+    const items = buildHotBuysList(seed, tf);
+    updatePeaks(items);
+    trackBuySignals(items, "Hot Buys");
     res.json({ count: items.length, items });
   }catch(e){
     res.status(500).json({ error: e.message });
@@ -687,13 +846,14 @@ app.get("/api/list/hot_buys", async (req,res)=>{
 
 app.get("/api/list/risky", async (req,res)=>{
   try{
-    const seed = await boostedSeed(42);
+    const seed = await boostedSeed(42, { allowHighRisk: true });
     const items = seed
       .filter(x => x.risk.riskLabel === "HIGH" && !x.risk.flags.includes("MICRO_LIQUIDITY"))
       .filter(x => (x.dump?.dumpRisk || "LOW") !== "HIGH")
       .filter(x => !x.risk.flags.includes("FALLING_KNIFE"))
       .sort((a,b)=> b.risk.riskScore - a.risk.riskScore)
       .slice(0, 30);
+    updatePeaks(items);
     res.json({ count: items.length, items });
   }catch(e){
     res.status(500).json({ error: e.message });
@@ -705,63 +865,71 @@ app.get("/api/list/uptrend_signal", async (req,res)=>{
     const tf = String(req.query.tf || "15m");
     const potential = String(req.query.potential || "MED");
     const seed = await boostedSeed(55);
-
-    const items = seed.map(x=>{
-      const pot = computePotential(x.bestPair, tf);
-      return { ...x, potential: pot };
-    })
-    .filter(x => x?.bestPair && !isTrash(x.bestPair))
-    .filter(x => x.risk.riskLabel !== "HIGH")
-    // Stronger quality gates: avoid pump-to-dex dump patterns, manipulation risk, and ultra-thin liquidity.
-    .filter(x => {
-      const liq = safeNum(x.bestPair?.liquidity?.usd);
-      const flags = x.risk?.flags || [];
-      const dumpRisk = x.dump?.dumpRisk || computeDumpRisk(x.bestPair).dumpRisk;
-
-      // Hard vetoes
-      if (dumpRisk === "HIGH") return false;
-      if (flags.includes("MICRO_LIQUIDITY")) return false;
-      if (flags.includes("MANIPULATION_RISK")) return false;
-
-      // Potential-tier-specific gates
-      if (potential === "HIGH"){
-        if (x.potential.potential !== "HIGH") return false;
-        if (x.risk.riskLabel !== "LOW") return false;
-        if (dumpRisk !== "LOW") return false;
-        if (flags.includes("VERY_LOW_LIQUIDITY") || flags.includes("LOW_LIQUIDITY")) return false;
-        if (flags.includes("ANOMALOUS_FLOW") || flags.includes("FALLING_KNIFE")) return false;
-        if (liq < 2500) return false;
-        return true;
-      }
-      if (potential === "MED"){
-        if (!(x.potential.potential === "MED" || x.potential.potential === "HIGH")) return false;
-        if (x.risk.riskScore > 55) return false;
-        if (flags.includes("FALLING_KNIFE")) return false;
-        if (liq < 1800) return false;
-        return true;
-      }
-      // LOW potential: keep very strict to avoid rugs; it's ok if list is short.
-      if (potential === "LOW"){
-        if (x.risk.riskScore > 65) return false;
-        if (dumpRisk !== "LOW") return false;
-        if (flags.includes("VERY_LOW_LIQUIDITY") || flags.includes("LOW_LIQUIDITY")) return false;
-        if (liq < 2200) return false;
-        return true;
-      }
-      return true;
-    })
-    .map(x => ({ ...x, showBuy: Boolean(x.potential.buy), buyWhy: x.potential.buyWhy }))
-    .sort((a,b)=>{
-      const pRank = (p)=> p==="HIGH"?3:p==="MED"?2:1;
-      const d = pRank(b.potential.potential) - pRank(a.potential.potential);
-      if (d !== 0) return d;
-      const r = a.risk.riskScore - b.risk.riskScore;
-      if (r !== 0) return r;
-      return trendChange(b.bestPair, tf) - trendChange(a.bestPair, tf);
-    })
-    .slice(0, 30);
+    const items = buildSignalPlusList(seed, tf, potential);
+    updatePeaks(items);
+    trackBuySignals(items, "Signal+");
 
     res.json({ count: items.length, items });
+  }catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/list/all_signals", async (req,res)=>{
+  try{
+    const tf = String(req.query.tf || "15m");
+    const potential = String(req.query.potential || "MED");
+    const seed = await boostedSeed(60);
+
+    const smart = buildSmartMoneyList(seed, tf);
+    const whale = buildWhaleAlertList(seed, tf);
+    const hot = buildHotBuysList(seed, tf);
+    const signal = buildSignalPlusList(seed, tf, potential);
+    trackBuySignals(smart, "Smart Money");
+    trackBuySignals(whale, "Whale Alert");
+    trackBuySignals(hot, "Hot Buys");
+    trackBuySignals(signal, "Signal+");
+
+    const by = new Map();
+    const merge = (list, source)=>{
+      for (const item of list){
+        const key = String(item.address || "");
+        if (!key) continue;
+        const existing = by.get(key);
+        if (!existing){
+          by.set(key, { ...item, sources: [source], showBuy: Boolean(item.showBuy) });
+        }else{
+          existing.sources = Array.from(new Set([...(existing.sources || []), source]));
+          existing.showBuy = Boolean(existing.showBuy || item.showBuy);
+          if (!existing.buyWhy && item.buyWhy) existing.buyWhy = item.buyWhy;
+        }
+      }
+    };
+
+    merge(smart, "Smart Money");
+    merge(whale, "Whale Alert");
+    merge(hot, "Hot Buys");
+    merge(signal, "Signal+");
+
+    const items = Array.from(by.values())
+      .sort((a,b)=>{
+        const buy = (b.showBuy ? 1 : 0) - (a.showBuy ? 1 : 0);
+        if (buy !== 0) return buy;
+        return (a.risk?.riskScore || 0) - (b.risk?.riskScore || 0);
+      })
+      .slice(0, 60);
+    updatePeaks(items);
+
+    res.json({ count: items.length, items });
+  }catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/performance_history", (req,res)=>{
+  try{
+    const items = perfHistory.listEntries();
+    res.json({ count: items.length, items, path: perfHistory.PERF_HISTORY_PATH });
   }catch(e){
     res.status(500).json({ error: e.message });
   }
@@ -777,6 +945,7 @@ app.get("/api/list/boosted", async (req,res)=>{
       .map(x => ({...x, liq: safeNum(x.bestPair?.liquidity?.usd), vol24: safeNum(x.bestPair?.volume?.h24)}))
       .sort((a,b)=> (b.liq - a.liq) || (b.vol24 - a.vol24))
       .slice(0, 30);
+    updatePeaks(items);
     res.json({ count: items.length, items });
   }catch(e){
     res.status(500).json({ error: e.message });

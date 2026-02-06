@@ -294,11 +294,25 @@ async function openDetail(address){
         <div class="kv"><div class="k">Liquidity</div><div class="v">${fmtUSD(p?.liquidity?.usd)}</div></div>
         <div class="kv"><div class="k">Vol (24h)</div><div class="v">${fmtUSD(p?.volume?.h24)}</div></div>
         <div class="kv"><div class="k">MC</div><div class="v">${fmtUSD(p?.marketCap)}</div></div>
-        <div class="kv"><div class="k">Signal MC</div><div class="v">${signalEntry?.entryMc ? fmtUSD(signalEntry.entryMc) : "—"}</div></div>
         <div class="kv"><div class="k">Buys/Sells (15m)</div><div class="v">${fmtNum(p?.txns?.m15?.buys)} / ${fmtNum(p?.txns?.m15?.sells)}</div></div>
       </div>
 
       <div class="hr"></div>
+
+      ${signalEntry ? `
+        <div class="subhead">Signal History</div>
+        <div class="metrics">
+          <div class="kv"><div class="k">Source</div><div class="v">${formatSourceLabel(signalEntry.source || "—")}</div></div>
+          <div class="kv"><div class="k">Entry MC</div><div class="v">${signalEntry.entryMc ? fmtUSD(signalEntry.entryMc) : "—"}</div></div>
+          <div class="kv"><div class="k">Peak MC</div><div class="v">${signalEntry.peakMc ? fmtUSD(signalEntry.peakMc) : "—"}</div></div>
+          <div class="kv"><div class="k">Last MC</div><div class="v">${signalEntry.lastMc ? fmtUSD(signalEntry.lastMc) : "—"}</div></div>
+          <div class="kv"><div class="k">ROI %</div><div class="v">${signalEntry.roiPct ? pct(signalEntry.roiPct) : "—"}</div></div>
+          <div class="kv"><div class="k">ROI X</div><div class="v">${signalEntry.roiX ? `${signalEntry.roiX}x` : "—"}</div></div>
+          <div class="kv"><div class="k">Signal</div><div class="v">${signalEntry.signal || "—"}</div></div>
+        </div>
+
+        <div class="hr"></div>
+      ` : ""}
 
       <div class="small">
         ${showSignals ? `

@@ -151,8 +151,6 @@ function renderCards(items){
     const liq = p?.liquidity?.usd;
     const vol24 = p?.volume?.h24;
     const mc = p?.marketCap;
-    const entryMc = Number(it.entryMc || 0);
-
     const change = (tf === "5m" ? p?.priceChange?.m5 : tf==="10m" ? (0.6*(p?.priceChange?.m5||0)+0.4*(p?.priceChange?.m15||0)) : tf==="15m" ? p?.priceChange?.m15 : tf==="1h"?p?.priceChange?.h1 : tf==="4h"?p?.priceChange?.h4 : tf==="1d"?p?.priceChange?.h24 : p?.priceChange?.m15);
 
     // MC-crash auto-remove (signals only): if MC collapses ~10x, blacklist permanently.
@@ -188,10 +186,6 @@ function renderCards(items){
     }
 
     const card = document.createElement("div");
-    const isSignal = isSignalTab(activeTab);
-    const peakMc = Number(it.peakMc || 0);
-    const roiPct = Number(it.roiPct || 0);
-    const roiX = Number(it.roiX || 0);
     card.className = "card tokenCard";
     card.innerHTML = `
       <div class="row">
@@ -211,10 +205,6 @@ function renderCards(items){
         <div class="kv"><div class="k">Liquidity</div><div class="v">${fmtUSD(liq)}</div></div>
         <div class="kv"><div class="k">Vol (24h)</div><div class="v">${fmtUSD(vol24)}</div></div>
         <div class="kv"><div class="k">MC</div><div class="v">${fmtUSD(mc)}</div></div>
-        ${isSignal ? `<div class="kv"><div class="k">Entry MC</div><div class="v">${fmtUSD(entryMc)}</div></div>` : ""}
-        ${isSignal ? `<div class="kv"><div class="k">Peak MC</div><div class="v">${fmtUSD(peakMc)}</div></div>` : ""}
-        ${isSignal ? `<div class="kv"><div class="k">ROI %</div><div class="v">${roiPct ? pct(roiPct) : "—"}</div></div>` : ""}
-        ${isSignal ? `<div class="kv"><div class="k">ROI X</div><div class="v">${roiX ? `${roiX}x` : "—"}</div></div>` : ""}
         <div class="kv"><div class="k">DEX</div><div class="v">${(p?.dexId || "—").toUpperCase?.() || "—"}</div></div>
       </div>
     `;
@@ -303,11 +293,7 @@ async function openDetail(address){
         <div class="subhead">Signal History</div>
         <div class="metrics">
           <div class="kv"><div class="k">Source</div><div class="v">${formatSourceLabel(signalEntry.source || "—")}</div></div>
-          <div class="kv"><div class="k">Entry MC</div><div class="v">${signalEntry.entryMc ? fmtUSD(signalEntry.entryMc) : "—"}</div></div>
-          <div class="kv"><div class="k">Peak MC</div><div class="v">${signalEntry.peakMc ? fmtUSD(signalEntry.peakMc) : "—"}</div></div>
           <div class="kv"><div class="k">Last MC</div><div class="v">${signalEntry.lastMc ? fmtUSD(signalEntry.lastMc) : "—"}</div></div>
-          <div class="kv"><div class="k">ROI %</div><div class="v">${signalEntry.roiPct ? pct(signalEntry.roiPct) : "—"}</div></div>
-          <div class="kv"><div class="k">ROI X</div><div class="v">${signalEntry.roiX ? `${signalEntry.roiX}x` : "—"}</div></div>
           <div class="kv"><div class="k">Signal</div><div class="v">${signalEntry.signal || "—"}</div></div>
         </div>
 

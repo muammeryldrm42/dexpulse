@@ -70,6 +70,15 @@ function formatNumber(value) {
   return `$${num.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
+function resolveAddress(item) {
+  const addr =
+    item?.address ||
+    item?.ident?.address ||
+    item?.bestPair?.baseToken?.address ||
+    "";
+  return String(addr).trim();
+}
+
 function buildDexscreenerUrl(item) {
   if (item?.bestPair?.url) return item.bestPair.url;
   if (item?.bestPair?.pairAddress) {
@@ -84,7 +93,7 @@ function buildDexscreenerUrl(item) {
 function formatMessage(item) {
   const name = item?.ident?.name || item?.bestPair?.baseToken?.name || "Token";
   const symbol = item?.ident?.symbol || item?.bestPair?.baseToken?.symbol || "";
-  const address = item?.address || "";
+  const address = resolveAddress(item);
   const price = formatUsd(item?.bestPair?.priceUsd);
   const marketCap = item?.bestPair?.marketCap || item?.bestPair?.fdv;
   const marketCapText = formatNumber(marketCap);
@@ -152,7 +161,7 @@ async function runOnce(state) {
   let sentCount = 0;
 
   for (const item of items) {
-    const address = String(item?.address || "").trim();
+    const address = resolveAddress(item);
     if (!address) continue;
     if (state.sent[address]) continue;
 

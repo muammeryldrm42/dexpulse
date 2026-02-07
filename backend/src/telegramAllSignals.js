@@ -4,7 +4,8 @@ const fetch = require("node-fetch");
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const BASE_URL = process.env.DEXPULSE_BASE_URL || "http://localhost:3000";
+const API_PORT = process.env.DEXPULSE_API_PORT || process.env.PORT || 3001;
+const BASE_URL = process.env.DEXPULSE_BASE_URL || `http://localhost:${API_PORT}`;
 const TF = process.env.ALL_SIGNALS_TF || "15m";
 const POTENTIAL = process.env.ALL_SIGNALS_POTENTIAL || "MED";
 const INTERVAL_MS = Number(process.env.ALL_SIGNALS_INTERVAL_MS || 20000);

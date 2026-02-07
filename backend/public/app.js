@@ -78,6 +78,16 @@ function pct(n){
   const s = x >= 0 ? "+" : "";
   return `${s}${x.toFixed(2)}%`;
 }
+function trendValue(pair, timeframe){
+  const p = pair || {};
+  if (timeframe === "5m") return p?.priceChange?.m5;
+  if (timeframe === "10m") return (0.6 * (p?.priceChange?.m5 || 0)) + (0.4 * (p?.priceChange?.m15 || 0));
+  if (timeframe === "15m") return p?.priceChange?.m15;
+  if (timeframe === "1h") return p?.priceChange?.h1;
+  if (timeframe === "4h") return p?.priceChange?.h4;
+  if (timeframe === "1d") return p?.priceChange?.h24;
+  return p?.priceChange?.m15;
+}
 function riskPill(label){
   if (label === "LOW") return "pill riskLow";
   if (label === "MED") return "pill riskMed";
@@ -151,7 +161,7 @@ function renderCards(items){
     const liq = p?.liquidity?.usd;
     const vol24 = p?.volume?.h24;
     const mc = p?.marketCap;
-    const change = (tf === "5m" ? p?.priceChange?.m5 : tf==="10m" ? (0.6*(p?.priceChange?.m5||0)+0.4*(p?.priceChange?.m15||0)) : tf==="15m" ? p?.priceChange?.m15 : tf==="1h"?p?.priceChange?.h1 : tf==="4h"?p?.priceChange?.h4 : tf==="1d"?p?.priceChange?.h24 : p?.priceChange?.m15);
+    const change = trendValue(p, tf);
 
     // MC-crash auto-remove (signals only): if MC collapses ~10x, blacklist permanently.
     if (isSignalTab(activeTab)){
@@ -280,7 +290,7 @@ async function openDetail(address){
 
       <div class="metrics">
         <div class="kv"><div class="k">Price</div><div class="v">${p.priceUsd ? fmtUSD(Number(p.priceUsd)) : "—"}</div></div>
-        <div class="kv"><div class="k">Chg (${tf})</div><div class="v">${pct(tf==="5m"?p?.priceChange?.m5:tf==="15m"?p?.priceChange?.m15:tf==="1h"?p?.priceChange?.h1:tf==="4h"?p?.priceChange?.h4:tf==="1d"?p?.priceChange?.h24:p?.priceChange?.m15)}</div></div>
+        <div class="kv"><div class="k">Chg (${tf})</div><div class="v">${pct(trendValue(p, tf))}</div></div>
         <div class="kv"><div class="k">Liquidity</div><div class="v">${fmtUSD(p?.liquidity?.usd)}</div></div>
         <div class="kv"><div class="k">Vol (24h)</div><div class="v">${fmtUSD(p?.volume?.h24)}</div></div>
         <div class="kv"><div class="k">MC</div><div class="v">${fmtUSD(p?.marketCap)}</div></div>

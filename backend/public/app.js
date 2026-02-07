@@ -109,7 +109,6 @@ function currentListEndpoint(){
   if (activeTab === "trending") return `/api/list/trending_low_risk?tf=${encodeURIComponent(tf)}`;
   if (activeTab === "uptrend") return `/api/list/uptrend_signal?tf=${encodeURIComponent(tf)}&potential=${encodeURIComponent(potentialFilter)}`;
   if (activeTab === "all_signals") return `/api/list/all_signals?tf=${encodeURIComponent(tf)}`;
-  if (activeTab === "okx_wallet") return `/api/list/okx_wallet_signal?tf=${encodeURIComponent(tf)}`;
   if (activeTab === "smart") return `/api/list/smart_money?tf=${encodeURIComponent(tf)}`;
   if (activeTab === "whale") return `/api/list/whale_alert?tf=${encodeURIComponent(tf)}`;
   if (activeTab === "hot") return `/api/list/hot_buys?tf=${encodeURIComponent(tf)}`;
@@ -337,12 +336,6 @@ async function openDetail(address){
   }
 }
 
-function updateOkxNotice(){
-  const notice = $("#okxNotice");
-  if (!notice) return;
-  notice.style.display = (activeTab === "okx_wallet") ? "block" : "none";
-}
-
 async function loadList(){
   try{
     setStatus("Loading…");
@@ -378,7 +371,6 @@ $$(".tab").forEach(t=>{
     t.classList.add("active");
     activeTab = t.dataset.tab;
     $("#potChips").style.display = (activeTab === "uptrend") ? "flex" : "none";
-    updateOkxNotice();
     loadList();
   });
 });
@@ -417,6 +409,5 @@ $("#closeDisclaimer").addEventListener("click", ()=>modal.close());
 (async ()=>{
   try{ await api("/api/health"); }catch(_){}
   $("#potChips").style.display = "none";
-  updateOkxNotice();
   loadList();
 })();

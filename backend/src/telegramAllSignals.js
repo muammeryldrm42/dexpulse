@@ -2,8 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const fetch = require("node-fetch");
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const BOT_TOKEN = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
+const CHAT_ID = String(process.env.TELEGRAM_CHAT_ID || "").trim();
 const API_PORT = process.env.DEXPULSE_API_PORT || process.env.PORT || 3001;
 const BASE_URL = process.env.DEXPULSE_BASE_URL || `http://localhost:${API_PORT}`;
 const TF = process.env.ALL_SIGNALS_TF || "15m";
@@ -12,6 +12,7 @@ const INTERVAL_MS = Number(process.env.ALL_SIGNALS_INTERVAL_MS || 20000);
 const STATE_PATH = process.env.ALL_SIGNALS_STATE_PATH || "/var/data/telegram_all_signals.json";
 const TTL_MS = Number(process.env.ALL_SIGNALS_TTL_MS || 24 * 60 * 60 * 1000);
 const SEND_DELAY_MS = Number(process.env.ALL_SIGNALS_SEND_DELAY_MS || 600);
+const RESET_STATE = /^(1|true|yes)$/i.test(process.env.ALL_SIGNALS_RESET_STATE || "");
 
 if (!BOT_TOKEN) {
   throw new Error("Missing TELEGRAM_BOT_TOKEN env var.");
@@ -167,7 +168,12 @@ async function runOnce(state) {
 }
 
 async function start() {
-  const state = loadState();
+  let state = loadState();
+  if (RESET_STATE) {
+    state = { sent: {} };
+    saveState(state);
+    console.log("AllSignals state reset by ALL_SIGNALS_RESET_STATE.");
+  }
   console.log("AllSignals Telegram notifier started.");
   console.log(`Base URL: ${BASE_URL}`);
   console.log(`Interval: ${INTERVAL_MS}ms | TF=${TF} | Potential=${POTENTIAL}`);

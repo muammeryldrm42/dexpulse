@@ -2,8 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const fetch = require("node-fetch");
 
-const BOT_TOKEN = String(process.env.8546876892:AAHRWUdhlAo6p7Xq9IPW4eBIm5kv-ArdpCc || "").trim();
-const CHAT_ID = String(process.env.-1003791958902 || "").trim();
+const BOT_TOKEN = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
+const CHAT_ID = String(process.env.TELEGRAM_CHAT_ID || "").trim();
 const API_PORT = process.env.DEXPULSE_API_PORT || process.env.PORT || 3001;
 const BASE_URL = process.env.DEXPULSE_BASE_URL || `http://localhost:${API_PORT}`;
 const TF = process.env.ALL_SIGNALS_TF || "15m";
@@ -127,7 +127,7 @@ async function fetchAllSignals() {
 }
 
 async function sendTelegramMessage(text) {
-  const url = `https://api.telegram.org/bot$8546876892:AAHRWUdhlAo6p7Xq9IPW4eBIm5kv-ArdpCc/sendMessage`;
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },

@@ -2,8 +2,34 @@ const fs = require("fs");
 const path = require("path");
 const fetch = require("node-fetch");
 
-const BOT_TOKEN = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
-const CHAT_ID = String(process.env.TELEGRAM_CHAT_ID || "").trim();
+const argv = process.argv.slice(2);
+
+function readArgValue(flag) {
+  const index = argv.indexOf(flag);
+  return index >= 0 ? String(argv[index + 1] || "").trim() : "";
+}
+
+const CONFIG_PATH = readArgValue("--config") || process.env.TELEGRAM_CONFIG_PATH || "";
+let config = {};
+if (CONFIG_PATH) {
+  try {
+    const raw = fs.readFileSync(CONFIG_PATH, "utf8");
+    config = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Failed to load Telegram config at ${CONFIG_PATH}: ${err.message}`);
+  }
+}
+
+const BOT_TOKEN = String(
+  readArgValue("--bot-token") ||
+    process.env.TELEGRAM_BOT_TOKEN ||
+    config.botToken ||
+    config.token ||
+    ""
+).trim();
+const CHAT_ID = String(
+  readArgValue("--chat-id") || process.env.TELEGRAM_CHAT_ID || config.chatId || ""
+).trim();
 const API_PORT = process.env.DEXPULSE_API_PORT || process.env.PORT || 3001;
 const BASE_URL = process.env.DEXPULSE_BASE_URL || `http://localhost:${API_PORT}`;
 const TF = process.env.ALL_SIGNALS_TF || "15m";
@@ -13,11 +39,9 @@ const STATE_PATH = process.env.ALL_SIGNALS_STATE_PATH || "/var/data/telegram_all
 const TTL_MS = Number(process.env.ALL_SIGNALS_TTL_MS || 24 * 60 * 60 * 1000);
 const SEND_DELAY_MS = Number(process.env.ALL_SIGNALS_SEND_DELAY_MS || 600);
 const RESET_STATE = /^(1|true|yes)$/i.test(process.env.ALL_SIGNALS_RESET_STATE || "");
-const TEST_MESSAGE = String(process.env.TELEGRAM_TEST_MESSAGE || "").trim();
-const argv = process.argv.slice(2);
-const testFlagIndex = argv.indexOf("--test");
-const CLI_TEST_MESSAGE =
-  testFlagIndex >= 0 ? String(argv[testFlagIndex + 1] || "").trim() : "";
+const TEST_MESSAGE = String(process.env.TELEGRAM_TEST_MESSAGE || config.testMessage || "").trim();
+const HAS_TEST_FLAG = argv.includes("--test");
+const CLI_TEST_MESSAGE = readArgValue("--test");
 
 if (!BOT_TOKEN) {
   throw new Error("Missing TELEGRAM_BOT_TOKEN env var.");
@@ -183,6 +207,9 @@ async function runOnce(state) {
 
 async function start() {
   const testMessage = CLI_TEST_MESSAGE || TEST_MESSAGE;
+  if (HAS_TEST_FLAG && !CLI_TEST_MESSAGE) {
+    throw new Error("Missing message after --test flag.");
+  }
   if (testMessage) {
     await sendTelegramMessage(testMessage);
     console.log("Telegram test message sent.");

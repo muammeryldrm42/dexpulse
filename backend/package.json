@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node src/index.js",
     "start": "node src/index.js",
-    "telegram:all-signals": "node src/telegramAllSignals.js"
+    "telegram:all-signals": "node src/telegramAllSignals.js",
+    "telegram:test-message": "node src/telegramTestMessage.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

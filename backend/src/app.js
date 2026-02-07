@@ -45,6 +45,50 @@ async function fetchJson(url, ttlMs = 15000){
   return setCached(url, data, ttlMs);
 }
 
+const OKX_SIGNAL_URL = process.env.OKX_SIGNAL_URL || "https://www.okx.com/priapi/v5/wallet/market/signal";
+
+function unwrapOkxSignalList(payload){
+  if (!payload) return [];
+  const data = payload?.data ?? payload?.result ?? payload;
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.list)) return data.list;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.signals)) return data.signals;
+  if (Array.isArray(data?.signalList)) return data.signalList;
+  return [];
+}
+
+function isSolanaChain(chain){
+  if (chain === null || chain === undefined || chain === "") return true;
+  const c = String(chain || "").toLowerCase();
+  return c === "solana" || c === "sol" || c === "501" || c.includes("sol");
+}
+
+function normalizeOkxSignalToken(entry){
+  const token = entry?.token || entry?.baseToken || entry?.coin || entry?.tokenInfo || {};
+  const address = entry?.tokenAddress
+    || entry?.tokenAddr
+    || entry?.address
+    || token?.address
+    || token?.tokenAddress
+    || token?.tokenAddr
+    || token?.contractAddress
+    || token?.contract;
+  const chain = entry?.chain || entry?.chainId || entry?.network || token?.chain || token?.chainId || token?.network;
+  const symbol = token?.symbol || entry?.symbol || "";
+  const name = token?.name || entry?.name || "";
+  return { address: String(address || "").trim(), chain, symbol, name };
+}
+
+async function fetchOkxSignalTokens(){
+  const raw = await fetchJson(OKX_SIGNAL_URL, 15000);
+  const list = unwrapOkxSignalList(raw);
+  return list
+    .map(normalizeOkxSignalToken)
+    .filter(token => token.address && isSolanaChain(token.chain));
+}
+
 // --- Token classification helpers
 const STABLE_SYMBOLS = new Set([
   "USDC","USDT","DAI","UXD","USDH","PYUSD","USDP","FRAX","TUSD","USDJ"
@@ -1144,6 +1188,48 @@ app.get("/api/list/all_signals", async (req,res)=>{
     const potential = String(req.query.potential || "MED");
     const items = await getAllSignals(tf, potential);
     const filtered = applyListQuery(items, req, { defaultLimit: 60, maxLimit: 120, tf });
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
+  }catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/list/okx_wallet_signal", async (req,res)=>{
+  try{
+    const tf = String(req.query.tf || "15m");
+    const tokens = await fetchOkxSignalTokens();
+    const seen = new Set();
+    const deduped = [];
+    for (const token of tokens){
+      const addr = String(token.address || "").trim();
+      if (!addr || seen.has(addr)) continue;
+      seen.add(addr);
+      deduped.push({ ...token, address: addr });
+    }
+
+    const enriched = await mapLimit(deduped, 4, async (token)=>{
+      const pairs = await tokenPairs(token.address);
+      const bestPair = pickBestPair(pairs);
+      if (!bestPair) return null;
+      const baseIdent = identFromPair(bestPair, token.address);
+      const ident = {
+        address: baseIdent.address,
+        name: token.name || baseIdent.name,
+        symbol: token.symbol || baseIdent.symbol,
+        logo: baseIdent.logo
+      };
+      const risk = computeRisk(bestPair);
+      const dump = computeDumpRisk(bestPair);
+      const whale = computeWhaleLike(bestPair);
+      const smart = computeSmartMoney(bestPair);
+      return { address: token.address, ident, bestPair, risk, dump, whale, smart, okxSignal: true };
+    });
+
+    const filtered = applyListQuery(enriched, req, {
+      defaultLimit: Math.max(1, enriched.length),
+      maxLimit: Math.max(120, enriched.length),
+      tf
+    });
     res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
   }catch(e){
     res.status(500).json({ error: e.message });

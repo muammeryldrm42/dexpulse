@@ -63,6 +63,7 @@ h1{font-size:22px;margin:0;font-weight:800;letter-spacing:.2px}
 .small{font-size:12px}
 .muted{color:var(--muted)}
 .sidebar .card{position:sticky;top:12px}
+.notice{border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.08);font-weight:800}
 .detailHead{display:flex;gap:10px;align-items:center}
 .detailHead .logo{width:42px;height:42px;border-radius:12px}
 .detailHead .name{font-size:16px}

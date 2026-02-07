@@ -13,6 +13,7 @@ const STATE_PATH = process.env.ALL_SIGNALS_STATE_PATH || "/var/data/telegram_all
 const TTL_MS = Number(process.env.ALL_SIGNALS_TTL_MS || 24 * 60 * 60 * 1000);
 const SEND_DELAY_MS = Number(process.env.ALL_SIGNALS_SEND_DELAY_MS || 600);
 const RESET_STATE = /^(1|true|yes)$/i.test(process.env.ALL_SIGNALS_RESET_STATE || "");
+const FORCE_RESEND = /^(1|true|yes)$/i.test(process.env.ALL_SIGNALS_FORCE_RESEND || "");
 const TEST_MESSAGE = String(process.env.TELEGRAM_TEST_MESSAGE || "").trim();
 
 if (!BOT_TOKEN) {
@@ -120,7 +121,7 @@ async function fetchAllSignals() {
   const res = await fetch(url, { headers: { accept: "application/json" } });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`AllSignals fetch failed ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(`AllSignals fetch failed ${res.status} (${url}): ${text.slice(0, 200)}`);
   }
   const data = await res.json();
   return Array.isArray(data?.items) ? data.items : [];
@@ -156,15 +157,22 @@ async function sendTelegramMessage(text) {
 
 async function runOnce(state) {
   const items = await fetchAllSignals();
-  if (!items.length) return;
+  if (!items.length) {
+    console.log("AllSignals: no items returned.");
+    return;
+  }
 
   pruneState(state);
   let sentCount = 0;
+  let skippedCount = 0;
 
   for (const item of items) {
     const address = resolveAddress(item);
     if (!address) continue;
-    if (state.sent[address]) continue;
+    if (!FORCE_RESEND && state.sent[address]) {
+      skippedCount += 1;
+      continue;
+    }
 
     const message = formatMessage(item);
     await sendTelegramMessage(message);
@@ -175,6 +183,9 @@ async function runOnce(state) {
   }
 
   if (sentCount > 0) saveState(state);
+  if (sentCount === 0 && skippedCount > 0) {
+    console.log(`AllSignals: ${skippedCount} items skipped (already sent).`);
+  }
 }
 
 async function start() {
@@ -193,6 +204,7 @@ async function start() {
   console.log("AllSignals Telegram notifier started.");
   console.log(`Base URL: ${BASE_URL}`);
   console.log(`Interval: ${INTERVAL_MS}ms | TF=${TF} | Potential=${POTENTIAL}`);
+  console.log(`Force resend: ${FORCE_RESEND ? "enabled" : "disabled"}`);
 
   await runOnce(state).catch(err => console.error(err.message));
   setInterval(() => {

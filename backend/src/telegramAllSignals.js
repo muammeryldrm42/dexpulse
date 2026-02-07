@@ -125,9 +125,20 @@ async function sendTelegramMessage(text) {
       disable_web_page_preview: false
     })
   });
+  const bodyText = await res.text().catch(() => "");
+  let payload;
+  try {
+    payload = bodyText ? JSON.parse(bodyText) : null;
+  } catch (_) {
+    payload = null;
+  }
+
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Telegram send failed ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`Telegram send failed ${res.status}: ${bodyText.slice(0, 200)}`);
+  }
+  if (payload && payload.ok === false) {
+    const description = payload.description || "Unknown Telegram API error.";
+    throw new Error(`Telegram send failed: ${description}`);
   }
 }
 

@@ -13,6 +13,11 @@ const STATE_PATH = process.env.ALL_SIGNALS_STATE_PATH || "/var/data/telegram_all
 const TTL_MS = Number(process.env.ALL_SIGNALS_TTL_MS || 24 * 60 * 60 * 1000);
 const SEND_DELAY_MS = Number(process.env.ALL_SIGNALS_SEND_DELAY_MS || 600);
 const RESET_STATE = /^(1|true|yes)$/i.test(process.env.ALL_SIGNALS_RESET_STATE || "");
+const TEST_MESSAGE = String(process.env.TELEGRAM_TEST_MESSAGE || "").trim();
+const argv = process.argv.slice(2);
+const testFlagIndex = argv.indexOf("--test");
+const CLI_TEST_MESSAGE =
+  testFlagIndex >= 0 ? String(argv[testFlagIndex + 1] || "").trim() : "";
 
 if (!BOT_TOKEN) {
   throw new Error("Missing TELEGRAM_BOT_TOKEN env var.");
@@ -177,6 +182,13 @@ async function runOnce(state) {
 }
 
 async function start() {
+  const testMessage = CLI_TEST_MESSAGE || TEST_MESSAGE;
+  if (testMessage) {
+    await sendTelegramMessage(testMessage);
+    console.log("Telegram test message sent.");
+    return;
+  }
+
   let state = loadState();
   if (RESET_STATE) {
     state = { sent: {} };

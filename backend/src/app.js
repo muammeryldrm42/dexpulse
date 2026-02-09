@@ -26,7 +26,8 @@ function setCached(key, val, ttlMs){
 // Rule: if MC collapses ~10x (e.g., 100k -> 10k), blacklist permanently.
 // Additional rule: auto-remove on fast ~70% MC dumps or rug-like liquidity wipes.
 const mcSeen = new Map(); // address -> { mc, liq, ts }
-const VETO_PATH = process.env.VETO_PATH || "/var/data/veto_blacklist.json";
+const VETO_PATH = process.env.VETO_PATH
+  || (process.env.VERCEL ? "/tmp/veto_blacklist.json" : "/var/data/veto_blacklist.json");
 const vetoStore = loadJsonFile(VETO_PATH, { items: {} });
 let vetoSaveTimer = null;
 
@@ -46,6 +47,8 @@ async function fetchJson(url, ttlMs = 15000){
 }
 
 const OKX_SIGNAL_URL = process.env.OKX_SIGNAL_URL || "https://www.okx.com/priapi/v5/wallet/market/signal";
+const PUMPFUN_SEARCH_URL = process.env.PUMPFUN_SEARCH_URL || "https://frontend-api.pump.fun/coins?search=";
+const BAGS_SEARCH_URL = process.env.BAGS_SEARCH_URL || "https://api.bags.fm/tokens/search?q=";
 
 function unwrapOkxSignalList(payload){
   if (!payload) return [];
@@ -56,6 +59,18 @@ function unwrapOkxSignalList(payload){
   if (Array.isArray(data?.data)) return data.data;
   if (Array.isArray(data?.signals)) return data.signals;
   if (Array.isArray(data?.signalList)) return data.signalList;
+  return [];
+}
+
+function unwrapTokenSearchList(payload){
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+  const data = payload?.data ?? payload?.result ?? payload;
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.list)) return data.list;
+  if (Array.isArray(data?.tokens)) return data.tokens;
+  if (Array.isArray(data?.results)) return data.results;
   return [];
 }
 
@@ -79,6 +94,45 @@ function normalizeOkxSignalToken(entry){
   const symbol = token?.symbol || entry?.symbol || "";
   const name = token?.name || entry?.name || "";
   return { address: String(address || "").trim(), chain, symbol, name };
+}
+
+function normalizeSearchToken(entry){
+  const token = entry?.token || entry?.baseToken || entry?.coin || entry?.tokenInfo || entry?.metadata || {};
+  const address = entry?.mint
+    || entry?.address
+    || entry?.tokenAddress
+    || entry?.tokenAddr
+    || token?.address
+    || token?.tokenAddress
+    || token?.tokenAddr
+    || token?.contractAddress
+    || token?.contract;
+  const symbol = entry?.symbol || token?.symbol || "";
+  const name = entry?.name || token?.name || "";
+  const logo = entry?.image || entry?.logo || entry?.logoURI || token?.image || token?.logo || token?.logoURI || "";
+  const addr = String(address || "").trim();
+  if (!addr) return null;
+  return {
+    address: addr,
+    ident: {
+      address: addr,
+      name: name || "Token",
+      symbol,
+      logo
+    }
+  };
+}
+
+async function searchPumpfunTokens(query){
+  const url = `${PUMPFUN_SEARCH_URL}${encodeURIComponent(query)}`;
+  const data = await fetchJson(url, 10000);
+  return unwrapTokenSearchList(data).map(normalizeSearchToken).filter(Boolean);
+}
+
+async function searchBagsTokens(query){
+  const url = `${BAGS_SEARCH_URL}${encodeURIComponent(query)}`;
+  const data = await fetchJson(url, 10000);
+  return unwrapTokenSearchList(data).map(normalizeSearchToken).filter(Boolean);
 }
 
 async function fetchOkxSignalTokens(){
@@ -797,13 +851,45 @@ function pickJupiterToken(list, wantSymbol, wantName){
 
 app.get("/api/health", (req,res)=>res.json({ ok:true }));
 
+app.get("/api/list/all", async (req,res)=>{
+  try{
+    const list = await getJupiterTokenList().catch(()=>[]);
+    const items = (Array.isArray(list) ? list : [])
+      .map(token => {
+        const address = String(token?.address || "").trim();
+        if (!address) return null;
+        return {
+          address,
+          ident: {
+            address,
+            name: token?.name || "Token",
+            symbol: token?.symbol || "",
+            logo: token?.logoURI || ""
+          }
+        };
+      })
+      .filter(Boolean);
+    const filtered = applyListQuery(items, req, { defaultLimit: 120, maxLimit: 250 });
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
+  }catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/search", async (req,res)=>{
   try{
     const q = String(req.query.q || "").trim();
     if (!q) return res.status(400).json({ error:"Missing q" });
     const url = "https://api.dexscreener.com/latest/dex/search?q=" + encodeURIComponent(q);
-    const data = await fetchJson(url, 10000);
-    const pairs = (data?.pairs || []).filter(p => p?.chainId === "solana").map(normalizePair);
+    const [dexData, pumpfunResult, bagsResult] = await Promise.allSettled([
+      fetchJson(url, 10000),
+      searchPumpfunTokens(q),
+      searchBagsTokens(q)
+    ]);
+    const dexPairsRaw = dexData.status === "fulfilled" ? dexData.value : null;
+    const pairs = (dexPairsRaw?.pairs || []).filter(p => p?.chainId === "solana").map(normalizePair);
+    const pumpfunTokens = pumpfunResult.status === "fulfilled" ? pumpfunResult.value : [];
+    const bagsTokens = bagsResult.status === "fulfilled" ? bagsResult.value : [];
 
     const by = new Map();
     for (const p of pairs){
@@ -815,8 +901,15 @@ app.get("/api/search", async (req,res)=>{
       if (!cur || liq > curLiq) by.set(addr, p);
     }
 
+    for (const extra of [...pumpfunTokens, ...bagsTokens]){
+      if (!extra?.address) continue;
+      if (!by.has(extra.address)) by.set(extra.address, null);
+    }
+
     const items = [...by.entries()].map(([address, bestPair])=>{
-      const ident = identFromPair(bestPair, address);
+      const fallback = pumpfunTokens.find(t => t.address === address)
+        || bagsTokens.find(t => t.address === address);
+      const ident = bestPair ? identFromPair(bestPair, address) : (fallback?.ident || { address });
       const risk = computeRisk(bestPair);
       return { address, ident, bestPair, risk };
     }).slice(0, 60);

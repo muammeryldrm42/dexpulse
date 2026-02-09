@@ -26,7 +26,8 @@ function setCached(key, val, ttlMs){
 // Rule: if MC collapses ~10x (e.g., 100k -> 10k), blacklist permanently.
 // Additional rule: auto-remove on fast ~70% MC dumps or rug-like liquidity wipes.
 const mcSeen = new Map(); // address -> { mc, liq, ts }
-const VETO_PATH = process.env.VETO_PATH || "/var/data/veto_blacklist.json";
+const VETO_PATH = process.env.VETO_PATH
+  || (process.env.VERCEL ? "/tmp/veto_blacklist.json" : "/var/data/veto_blacklist.json");
 const vetoStore = loadJsonFile(VETO_PATH, { items: {} });
 let vetoSaveTimer = null;
 
@@ -796,6 +797,31 @@ function pickJupiterToken(list, wantSymbol, wantName){
 }
 
 app.get("/api/health", (req,res)=>res.json({ ok:true }));
+
+app.get("/api/list/all", async (req,res)=>{
+  try{
+    const list = await getJupiterTokenList().catch(()=>[]);
+    const items = (Array.isArray(list) ? list : [])
+      .map(token => {
+        const address = String(token?.address || "").trim();
+        if (!address) return null;
+        return {
+          address,
+          ident: {
+            address,
+            name: token?.name || "Token",
+            symbol: token?.symbol || "",
+            logo: token?.logoURI || ""
+          }
+        };
+      })
+      .filter(Boolean);
+    const filtered = applyListQuery(items, req, { defaultLimit: 120, maxLimit: 250 });
+    res.json({ count: filtered.items.length, items: filtered.items, meta: filtered.meta });
+  }catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
 
 app.get("/api/search", async (req,res)=>{
   try{

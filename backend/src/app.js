@@ -26,7 +26,8 @@ function setCached(key, val, ttlMs){
 // Rule: if MC collapses ~10x (e.g., 100k -> 10k), blacklist permanently.
 // Additional rule: auto-remove on fast ~70% MC dumps or rug-like liquidity wipes.
 const mcSeen = new Map(); // address -> { mc, liq, ts }
-const VETO_PATH = process.env.VETO_PATH || "/var/data/veto_blacklist.json";
+const VETO_PATH = process.env.VETO_PATH
+  || (process.env.VERCEL ? "/tmp/veto_blacklist.json" : "/var/data/veto_blacklist.json");
 const vetoStore = loadJsonFile(VETO_PATH, { items: {} });
 let vetoSaveTimer = null;
 

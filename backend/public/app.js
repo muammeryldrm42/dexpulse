@@ -51,7 +51,7 @@ async function api(path){
 }
 
 function currentListEndpoint(){
-  return `/api/list/majors?tf=${encodeURIComponent(tf)}`;
+  return `/api/list/all?tf=${encodeURIComponent(tf)}`;
 }
 
 function renderCards(items){
@@ -170,7 +170,7 @@ async function loadList(){
     const items = data.items || [];
     renderCards(items);
     setStatus(`Showing ${items.length} tokens`);
-    listHint.textContent = "Majors • 24h change";
+    listHint.textContent = "All Solana tokens • 24h change";
   }catch(e){
     setStatus("");
     $("#grid").innerHTML = `<div class="card"><div class="muted">Failed to load list.</div><div class="small" style="margin-top:8px;color:#fca5a5">${String(e.message||e)}</div></div>`;

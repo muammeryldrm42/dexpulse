@@ -3,68 +3,34 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ClawPulse</title>
+  <title>DexPulse Terminal</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <div class="wrap">
     <header class="header">
       <div class="brand">
-        <img class="brandLogo" src="/clawpulse-logo.svg" alt="ClawPulse logo" />
-        <h1>ClawPulse</h1>
+        <img class="brandLogo" src="/clawpulse-logo.svg" alt="DexPulse logo" />
+        <div>
+          <h1>DexPulse Terminal</h1>
+          <div class="muted small">Solana token search & market overview</div>
+        </div>
       </div>
 
       <div class="controls">
         <div class="input">
           <span class="muted">🔎</span>
-          <input id="q" placeholder="Search Solana tokens… (name / symbol / CA)" autocomplete="off" />
+          <input id="q" placeholder="Search by name, symbol, or contract address" autocomplete="off" />
         </div>
-        <button id="searchBtn" class="btn primary">Search</button>
-        <button id="disclaimerBtn" class="btn ghost">Disclaimer</button>
       </div>
     </header>
 
-    <div class="tabsRow">
-      <div class="tabs" id="tabs">
-        <div class="tab active" data-tab="majors">Majors</div>
-        <div class="tab" data-tab="trending">Trending</div>
-        <div class="tab" data-tab="uptrend">Signal+</div>
-        <div class="tab" data-tab="all_signals">All Signals</div>
-        <div class="tab" data-tab="smart">Smart Money</div>
-        <div class="tab" data-tab="whale">Whale Alert</div>
-        <div class="tab" data-tab="hot">Hot Buys</div>
-        <div class="tab" data-tab="boosted">Boosted</div>
-        <div class="tab" data-tab="volume">Top Volume</div>
-        <div class="tab" data-tab="liq">High Liquidity</div>
-        <div class="tab" data-tab="risky">Risky</div>
-      </div>
-
-      <div class="rightTools">
-        <div class="seg" id="tfSeg">
-          <button class="segBtn" data-tf="5m">5m</button>
-          <button class="segBtn" data-tf="10m">10m</button>
-          <button class="segBtn active" data-tf="15m">15m</button>
-          <button class="segBtn" data-tf="1h">1h</button>
-          <button class="segBtn" data-tf="4h">4h</button>
-          <button class="segBtn" data-tf="1d">1d</button>
-        </div>
-
-        <div class="chips" id="potChips" style="display:none">
-          <div class="chip" data-pot="HIGH">Potential HIGH</div>
-          <div class="chip active" data-pot="MED">Potential MED</div>
-          <div class="chip" data-pot="LOW">Potential LOW</div>
-        </div>
-
-        <div class="chips" id="riskChips">
-          <div class="chip active" data-risk="all">All</div>
-          <div class="chip" data-risk="low">Low Risk</div>
-        </div>
-      </div>
-    </div>
-
     <div class="layout">
       <main>
-        <div id="status" class="status"></div>
+        <div class="statusRow">
+          <div id="status" class="status"></div>
+          <div class="muted small" id="listHint">Majors snapshot • 24h change</div>
+        </div>
         <div id="grid" class="grid"></div>
       </main>
 
@@ -75,20 +41,6 @@
       </aside>
     </div>
 
-    <dialog id="disclaimerModal">
-      <div class="modalHead">
-        <h2>Disclaimer</h2>
-        <button class="closeX" id="closeDisclaimer">Close</button>
-      </div>
-      <div class="small muted">
-        <p><b>Important:</b> ClawPulse is provided for informational and educational purposes only.</p>
-        <p>Nothing on this website constitutes financial advice, investment advice, trading advice, or any other kind of advice. You are solely responsible for your decisions.</p>
-        <p>Cryptocurrency markets are highly volatile. Trading and investing involves significant risk and can result in the loss of your entire capital.</p>
-        <p>ClawPulse does not verify the legitimacy, safety, or compliance of any token, pool, or project. Tokens may be scams; smart contracts can contain vulnerabilities; liquidity can be pulled; prices can move rapidly.</p>
-        <p>Any “signals”, “trend filters”, or metrics shown are heuristic indicators derived from public sources and may be inaccurate, delayed, incomplete, or misleading. DYOR.</p>
-        <p>By using this website, you agree that ClawPulse and its contributors are not liable for any losses or damages arising from your use of the site.</p>
-      </div>
-    </dialog>
   </div>
 
   <script src="/app.js"></script>

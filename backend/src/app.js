@@ -36,7 +36,7 @@ const smartSeen = new Map(); // address -> { streak, lastScore, ts }
 async function fetchJson(url, ttlMs = 15000){
   const cached = getCached(url);
   if (cached) return cached;
-  const res = await fetch(url, { headers: { "accept": "application/json", "user-agent":"dexPulse-v6" } });
+  const res = await fetch(url, { headers: { "accept": "application/json", "user-agent":"ClawPulse-v1" } });
   if (!res.ok){
     const t = await res.text().catch(()=> "");
     throw new Error(`Upstream ${res.status}: ${t.slice(0,200)}`);

@@ -97,7 +97,6 @@ function renderCards(items){
         </div>
       </div>
     `;
-    card.addEventListener("click", ()=>openDetail(it.address));
     grid.appendChild(card);
   }
 }
@@ -118,12 +117,9 @@ async function openDetail(address){
     const p = data.bestPair || {};
     const warnings = data.warnings || [];
 
-    const dsUrl = p?.url || (ident.address ? `https://dexscreener.com/solana/${ident.address}` : "#");
-    const gtUrl = p?.pairAddress ? `https://www.geckoterminal.com/solana/pools/${p.pairAddress}` : "#";
-
     const chartHtml = p?.pairAddress
       ? `<div class="chartBox"><iframe src="${geckoEmbedUrl(p.pairAddress, tf)}" loading="lazy"></iframe></div>`
-      : `<div class="card muted">Chart unavailable — <a href="${dsUrl}" target="_blank" rel="noreferrer">Open on DexScreener</a></div>`;
+      : `<div class="card muted">Chart unavailable — open on DexScreener for details.</div>`;
 
     const warnHtml = warnings.map(w=>{
       const cls = w.level === "danger" ? "danger" : w.level === "warn" ? "warn" : "ok";
@@ -139,14 +135,6 @@ async function openDetail(address){
           <div class="small muted" style="margin-top:4px;word-break:break-all">${ident.address || ""}</div>
         </div>
       </div>
-
-      <div class="linkRow">
-        <span class="muted">Markets:</span>
-        <a href="${dsUrl}" target="_blank" rel="noreferrer">DexScreener</a>
-        <a href="${gtUrl}" target="_blank" rel="noreferrer">GeckoTerminal</a>
-      </div>
-
-      <div class="hr"></div>
 
       ${chartHtml}
 

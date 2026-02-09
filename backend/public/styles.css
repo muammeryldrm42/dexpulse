@@ -30,8 +30,8 @@ h1{font-size:22px;margin:0;font-weight:800;letter-spacing:.2px}
 @media(max-width:1180px){.layout{grid-template-columns:1fr}}
 @media(max-width:720px){.input{min-width:240px}}
 .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px}
-.tokenCard{cursor:pointer;transition:transform .05s ease}
-.tokenCard:hover{transform:translateY(-1px);border-color:#2b3b4f}
+.tokenCard{transition:transform .05s ease}
+.tokenCard:hover{border-color:#2b3b4f}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .left{display:flex;align-items:center;gap:10px;min-width:0}
 .logo{width:34px;height:34px;border-radius:10px;background:#121a25;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex:0 0 auto}
@@ -63,9 +63,6 @@ h1{font-size:22px;margin:0;font-weight:800;letter-spacing:.2px}
 .detailHead .logo{width:42px;height:42px;border-radius:12px}
 .detailHead .name{font-size:16px}
 .subhead{font-size:12px;font-weight:900;letter-spacing:.2px;text-transform:uppercase;color:var(--muted)}
-.linkRow{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;font-size:12px;font-weight:800}
-.linkRow a{color:var(--text);text-decoration:none;border-bottom:1px solid transparent}
-.linkRow a:hover{border-bottom-color:var(--accent)}
 .hr{height:1px;background:var(--border);margin:12px 0}
 .warnings{display:flex;flex-direction:column;gap:8px}
 .warnItem{padding:9px 10px;border-radius:12px;border:1px solid var(--border);background:rgba(255,255,255,.02);font-weight:900;font-size:12px;color:var(--text)}

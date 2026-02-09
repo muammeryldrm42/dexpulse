@@ -1,59 +1,8 @@
 const $ = (s)=>document.querySelector(s);
-const $$ = (s)=>Array.from(document.querySelectorAll(s));
 
-let activeTab = "majors";
-let tf = "15m";
-// Signals are always visible (no Show/Hide toggle).
-const showSignals = true;
-let riskFilter = "all";
-let potentialFilter = "MED";
-const cooldown = new Map();
-// MC-crash blacklist: if market cap collapses (e.g., 100k -> 10k),
-// remove from signal tabs and never re-add.
-const MC_HISTORY_KEY = "dexpulse_mc_history_v1";
-const MC_BLACKLIST_KEY = "dexpulse_mc_blacklist_v1";
-
-function loadJson(key, fallback){
-  try{
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  }catch(_){
-    return fallback;
-  }
-}
-
-function saveJson(key, obj){
-  try{ localStorage.setItem(key, JSON.stringify(obj)); }catch(_){/* ignore */}
-}
-
-function loadMcHistory(){
-  return loadJson(MC_HISTORY_KEY, {});
-}
-
-function saveMcHistory(h){
-  saveJson(MC_HISTORY_KEY, h);
-}
-
-function loadMcBlacklist(){
-  return loadJson(MC_BLACKLIST_KEY, {});
-}
-
-function saveMcBlacklist(b){
-  saveJson(MC_BLACKLIST_KEY, b);
-}
-
-function mcCrashDetected(prevMc, curMc){
-  const p = Number(prevMc);
-  const c = Number(curMc);
-  if (!Number.isFinite(p) || !Number.isFinite(c)) return false;
-  if (p <= 0 || c <= 0) return false;
-  // 10x collapse rule (e.g., 100k -> 10k)
-  return c <= (p / 10);
-}
-
-function isSignalTab(tab){
-  return tab === "uptrend" || tab === "smart" || tab === "whale" || tab === "hot" || tab === "all_signals";
-}
+const tf = "1d";
+const listHint = $("#listHint");
+let searchTimer = null;
 
 function fmtUSD(n){
   const x = Number(n);
@@ -88,19 +37,6 @@ function trendValue(pair, timeframe){
   if (timeframe === "1d") return p?.priceChange?.h24;
   return p?.priceChange?.m15;
 }
-function riskPill(label){
-  if (label === "LOW") return "pill riskLow";
-  if (label === "MED") return "pill riskMed";
-  return "pill riskHigh";
-}
-function formatSourceLabel(source){
-  const raw = String(source || "");
-  if (raw === "smart_money") return "Smart Money";
-  if (raw === "whale") return "Whale Alert";
-  if (raw === "hot_buys") return "Hot Buys";
-  if (raw === "signal_plus") return "Signal+";
-  return raw;
-}
 function logoHtml(url, symbol){
   if (url) return `<img src="${url}" alt="logo" onerror="this.style.display='none'; this.parentElement.textContent='${(symbol||'?').slice(0,1)}';">`;
   return (symbol||"?").slice(0,1);
@@ -115,90 +51,31 @@ async function api(path){
 }
 
 function currentListEndpoint(){
-  if (activeTab === "majors") return `/api/list/majors?tf=${encodeURIComponent(tf)}`;
-  if (activeTab === "trending") return `/api/list/trending_low_risk?tf=${encodeURIComponent(tf)}`;
-  if (activeTab === "uptrend") return `/api/list/uptrend_signal?tf=${encodeURIComponent(tf)}&potential=${encodeURIComponent(potentialFilter)}`;
-  if (activeTab === "all_signals") return `/api/list/all_signals?tf=${encodeURIComponent(tf)}`;
-  if (activeTab === "smart") return `/api/list/smart_money?tf=${encodeURIComponent(tf)}`;
-  if (activeTab === "whale") return `/api/list/whale_alert?tf=${encodeURIComponent(tf)}`;
-  if (activeTab === "hot") return `/api/list/hot_buys?tf=${encodeURIComponent(tf)}`;
-  if (activeTab === "boosted") return `/api/list/boosted?tf=${encodeURIComponent(tf)}`;
-  if (activeTab === "volume") return `/api/list/top_volume?tf=${encodeURIComponent(tf)}`;
-  if (activeTab === "liq") return `/api/list/high_liquidity?tf=${encodeURIComponent(tf)}`;
-  if (activeTab === "risky") return `/api/list/risky?tf=${encodeURIComponent(tf)}`;
   return `/api/list/majors?tf=${encodeURIComponent(tf)}`;
-}
-
-function applyRiskFilter(items){
-  if (riskFilter !== "low") return items;
-  return items.filter(x => (x?.risk?.riskLabel === "LOW"));
 }
 
 function renderCards(items){
   const grid = $("#grid");
   grid.innerHTML = "";
-  const filtered = applyRiskFilter(items);
 
-  // MC-crash blacklist (permanent): if MC collapses 10x, remove from signals and never re-add.
-  const mcHist = loadMcHistory();
-  const mcBlack = loadMcBlacklist();
-  let wroteHistory = false;
-  let wroteBlacklist = false;
-
-  if (!filtered || filtered.length === 0){
-    grid.innerHTML = `<div class="card muted">No tokens to show for this filter. Try another tab / timeframe.</div>`;
+  if (!items || items.length === 0){
+    grid.innerHTML = `<div class="card muted">No tokens found. Try a different search.</div>`;
     return;
   }
 
-  for (const it of filtered){
-    // Skip tokens that were permanently blacklisted for MC crash.
-    if (isSignalTab(activeTab) && mcBlack[it.address]) continue;
-
+  for (const it of items){
     const ident = it.ident || {};
     const p = it.bestPair || {};
-    const risk = it.risk || {};
     const price = p.priceUsd ? Number(p.priceUsd) : null;
     const liq = p?.liquidity?.usd;
     const vol24 = p?.volume?.h24;
     const mc = p?.marketCap;
     const change = trendValue(p, tf);
 
-    // MC-crash auto-remove (signals only): if MC collapses ~10x, blacklist permanently.
-    if (isSignalTab(activeTab)){
-      const prev = mcHist[it.address]?.mc;
-      if (mcCrashDetected(prev, mc)){
-        mcBlack[it.address] = { ts: Date.now(), reason: "mc_crash", prevMc: prev, mc: mc };
-        wroteBlacklist = true;
-        continue;
-      }
-    }
-
-    // Update MC history (for next refresh).
-    if (Number.isFinite(Number(mc)) && Number(mc) > 0){
-      mcHist[it.address] = { mc: Number(mc), liq: Number(liq)||0, ts: Date.now() };
-      wroteHistory = true;
-    }
-
-    const pills = [];
-    pills.push(`<span class="${riskPill(risk.riskLabel)}">RISK ${risk.riskScore ?? "—"} (${risk.riskLabel||"—"})</span>`);
-    if (it.dump?.dumpRisk) pills.push(`<span class="pill">DUMP ${it.dump.dumpRisk}</span>`);
-    if (activeTab === "uptrend" && it.potential){
-      pills.push(`<span class="pill">POTENTIAL ${it.potential.potential}</span>`);
-    }
-    if (activeTab === "smart" && it.smart?.smartLabel && it.smart.smartLabel !== "NONE"){
-      pills.push(`<span class="pill">SMART ${it.smart.smartLabel}</span>`);
-    }
-    if (activeTab === "whale" && it.whale?.whaleLabel && it.whale.whaleLabel !== "NONE"){
-      pills.push(`<span class="pill">WHALE ${it.whale.whaleLabel}</span>`);
-    }
-    if (activeTab === "all_signals" && Array.isArray(it.sources) && it.sources.length){
-      pills.push(`<span class="pill">SRC ${it.sources.join(" / ")}</span>`);
-    }
-
     const card = document.createElement("div");
-    card.className = "card tokenCard";
+    card.className = "card tokenCard tokenRowCard";
     card.innerHTML = `
-      <div class="row">
+      <div class="tokenRow">
         <div class="left">
           <div class="logo">${logoHtml(ident.logo, ident.symbol)}</div>
           <div class="title">
@@ -206,24 +83,19 @@ function renderCards(items){
             <div class="sym">${ident.symbol || ""}</div>
           </div>
         </div>
-        <div class="pills">${pills.join("")}</div>
-      </div>
-
-      <div class="metrics">
-        <div class="kv"><div class="k">Price</div><div class="v">${price ? fmtUSD(price) : "—"}</div></div>
-        <div class="kv"><div class="k">Chg (${tf})</div><div class="v">${pct(change)}</div></div>
-        <div class="kv"><div class="k">Liquidity</div><div class="v">${fmtUSD(liq)}</div></div>
-        <div class="kv"><div class="k">Vol (24h)</div><div class="v">${fmtUSD(vol24)}</div></div>
-        <div class="kv"><div class="k">MC</div><div class="v">${fmtUSD(mc)}</div></div>
-        <div class="kv"><div class="k">DEX</div><div class="v">${(p?.dexId || "—").toUpperCase?.() || "—"}</div></div>
+        <div class="tokenStats">
+          <div class="stat"><div class="k">Price</div><div class="v">${price ? fmtUSD(price) : "—"}</div></div>
+          <div class="stat"><div class="k">24h</div><div class="v ${change >= 0 ? "up" : "down"}">${pct(change)}</div></div>
+          <div class="stat"><div class="k">Liquidity</div><div class="v">${fmtUSD(liq)}</div></div>
+          <div class="stat"><div class="k">Volume</div><div class="v">${fmtUSD(vol24)}</div></div>
+          <div class="stat"><div class="k">Market Cap</div><div class="v">${fmtUSD(mc)}</div></div>
+          <div class="stat"><div class="k">DEX</div><div class="v">${(p?.dexId || "—").toUpperCase?.() || "—"}</div></div>
+        </div>
       </div>
     `;
     card.addEventListener("click", ()=>openDetail(it.address));
     grid.appendChild(card);
   }
-
-  if (wroteHistory) saveMcHistory(mcHist);
-  if (wroteBlacklist) saveMcBlacklist(mcBlack);
 }
 
 function geckoEmbedUrl(pairAddress, resolution){
@@ -240,21 +112,10 @@ async function openDetail(address){
 
     const ident = data.ident || {};
     const p = data.bestPair || {};
-    const risk = data.risk || {};
-    const pot = data.potential || {};
-    const dump = data.dump || {};
-    const whale = data.whale || {};
-    const smart = data.smart || {};
     const warnings = data.warnings || [];
-    const signalEntry = data.signalEntry || null;
-
-    if (activeTab === "uptrend" && pot.buy){
-      cooldown.set(address, Date.now());
-    }
 
     const dsUrl = p?.url || (ident.address ? `https://dexscreener.com/solana/${ident.address}` : "#");
     const gtUrl = p?.pairAddress ? `https://www.geckoterminal.com/solana/pools/${p.pairAddress}` : "#";
-    const bmUrl = ident.address ? `https://app.bubblemaps.io/solana/token/${ident.address}` : "#";
 
     const chartHtml = p?.pairAddress
       ? `<div class="chartBox"><iframe src="${geckoEmbedUrl(p.pairAddress, tf)}" loading="lazy"></iframe></div>`
@@ -275,11 +136,10 @@ async function openDetail(address){
         </div>
       </div>
 
-      <div class="actions">
+      <div class="linkRow">
+        <span class="muted">Markets:</span>
         <a href="${dsUrl}" target="_blank" rel="noreferrer">DexScreener</a>
         <a href="${gtUrl}" target="_blank" rel="noreferrer">GeckoTerminal</a>
-        <a href="${bmUrl}" target="_blank" rel="noreferrer">BubbleMaps</a>
-        <button id="copyCaBtn">Copy CA</button>
       </div>
 
       <div class="hr"></div>
@@ -290,7 +150,7 @@ async function openDetail(address){
 
       <div class="metrics">
         <div class="kv"><div class="k">Price</div><div class="v">${p.priceUsd ? fmtUSD(Number(p.priceUsd)) : "—"}</div></div>
-        <div class="kv"><div class="k">Chg (${tf})</div><div class="v">${pct(trendValue(p, tf))}</div></div>
+        <div class="kv"><div class="k">24h Change</div><div class="v">${pct(trendValue(p, tf))}</div></div>
         <div class="kv"><div class="k">Liquidity</div><div class="v">${fmtUSD(p?.liquidity?.usd)}</div></div>
         <div class="kv"><div class="k">Vol (24h)</div><div class="v">${fmtUSD(p?.volume?.h24)}</div></div>
         <div class="kv"><div class="k">MC</div><div class="v">${fmtUSD(p?.marketCap)}</div></div>
@@ -299,46 +159,10 @@ async function openDetail(address){
 
       <div class="hr"></div>
 
-      ${signalEntry ? `
-        <div class="subhead">Signal History</div>
-        <div class="metrics">
-          <div class="kv"><div class="k">Source</div><div class="v">${formatSourceLabel(signalEntry.source || "—")}</div></div>
-          <div class="kv"><div class="k">Last MC</div><div class="v">${signalEntry.lastMc ? fmtUSD(signalEntry.lastMc) : "—"}</div></div>
-          <div class="kv"><div class="k">Signal</div><div class="v">${signalEntry.signal || "—"}</div></div>
-        </div>
-
-        <div class="hr"></div>
-      ` : ""}
-
-      <div class="small">
-        ${showSignals ? `
-          <div class="row">
-            <span class="${riskPill(risk.riskLabel)}">RISK ${risk.riskScore} (${risk.riskLabel})</span>
-            <span class="pill">DUMP ${dump.dumpRisk || "—"}</span>
-            <span class="pill">WHALE ${whale.whaleLabel || "—"}</span>
-            <span class="pill">SMART ${smart.smartLabel || "—"}</span>
-          </div>
-          ${activeTab === "uptrend" ? `<div class="small muted" style="margin-top:8px"><b>Potential:</b> ${pot.potential || "—"} • ${(pot.why||[]).join(" • ")}</div>` : ""}
-        ` : `<div class="muted">Enable “Show Signals” to see risk/potential insights.</div>`}
-      </div>
-
-      <div class="hr"></div>
-
       <div class="warnings">
         ${warnHtml}
       </div>
     `;
-
-    $("#copyCaBtn").addEventListener("click", async ()=>{
-      try{
-        await navigator.clipboard.writeText(ident.address || "");
-        $("#copyCaBtn").textContent = "Copied!";
-        setTimeout(()=>($("#copyCaBtn").textContent="Copy CA"), 900);
-      }catch(_){
-        $("#copyCaBtn").textContent = "Copy failed";
-        setTimeout(()=>($("#copyCaBtn").textContent="Copy CA"), 900);
-      }
-    });
 
   }catch(e){
     setStatus("");
@@ -354,70 +178,38 @@ async function loadList(){
     const items = data.items || [];
     renderCards(items);
     setStatus(`Showing ${items.length} tokens`);
+    listHint.textContent = "Majors snapshot • 24h change";
   }catch(e){
     setStatus("");
     $("#grid").innerHTML = `<div class="card"><div class="muted">Failed to load list.</div><div class="small" style="margin-top:8px;color:#fca5a5">${String(e.message||e)}</div></div>`;
   }
 }
 
-$("#searchBtn").addEventListener("click", async ()=>{
+async function runSearch(){
   const q = $("#q").value.trim();
-  if (!q) return;
+  if (!q){
+    await loadList();
+    return;
+  }
   try{
     setStatus("Searching…");
+    listHint.textContent = "Search results";
     const data = await api(`/api/search?q=${encodeURIComponent(q)}`);
     setStatus(`Search results: ${data.items.length}`);
-    renderCards(data.items.map(x=>({ address:x.address, ident:x.ident, bestPair:x.bestPair, risk:x.risk })));
+    renderCards(data.items.map(x=>({ address:x.address, ident:x.ident, bestPair:x.bestPair })));
   }catch(e){
     setStatus("");
     $("#grid").innerHTML = `<div class="card"><div class="muted">Search failed.</div><div class="small" style="margin-top:8px;color:#fca5a5">${String(e.message||e)}</div></div>`;
   }
-});
-$("#q").addEventListener("keydown",(e)=>{ if (e.key === "Enter") $("#searchBtn").click(); });
+}
 
-$$(".tab").forEach(t=>{
-  t.addEventListener("click", ()=>{
-    $$(".tab").forEach(x=>x.classList.remove("active"));
-    t.classList.add("active");
-    activeTab = t.dataset.tab;
-    $("#potChips").style.display = (activeTab === "uptrend") ? "flex" : "none";
-    loadList();
-  });
+$("#q").addEventListener("input", ()=>{
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(()=>{ runSearch(); }, 350);
 });
-
-$$(".segBtn").forEach(b=>{
-  b.addEventListener("click", ()=>{
-    $$(".segBtn").forEach(x=>x.classList.remove("active"));
-    b.classList.add("active");
-    tf = b.dataset.tf;
-    loadList();
-  });
-});
-
-$$('#potChips .chip').forEach(c=>{
-  c.addEventListener("click", ()=>{
-    $$('#potChips .chip').forEach(x=>x.classList.remove("active"));
-    c.classList.add("active");
-    potentialFilter = c.dataset.pot;
-    loadList();
-  });
-});
-
-$$('#riskChips .chip').forEach(c=>{
-  c.addEventListener("click", ()=>{
-    $$('#riskChips .chip').forEach(x=>x.classList.remove("active"));
-    c.classList.add("active");
-    riskFilter = c.dataset.risk;
-    loadList();
-  });
-});
-
-const modal = $("#disclaimerModal");
-$("#disclaimerBtn").addEventListener("click", ()=>modal.showModal());
-$("#closeDisclaimer").addEventListener("click", ()=>modal.close());
+$("#q").addEventListener("keydown",(e)=>{ if (e.key === "Enter") runSearch(); });
 
 (async ()=>{
   try{ await api("/api/health"); }catch(_){}
-  $("#potChips").style.display = "none";
   loadList();
 })();

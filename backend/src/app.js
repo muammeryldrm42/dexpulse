@@ -332,7 +332,13 @@ function pickBestPair(pairs){
     const tx = safeNum(p?.txns?.h24?.buys) + safeNum(p?.txns?.h24?.sells);
     return liq * 1e6 + vol * 10 + tx;
   };
-  return [...pairs].sort((a,b)=>score(b)-score(a))[0];
+  let best = pairs[0];
+  let bestScore = score(best);
+  for (let i = 1; i < pairs.length; i++){
+    const s = score(pairs[i]);
+    if (s > bestScore){ best = pairs[i]; bestScore = s; }
+  }
+  return best;
 }
 
 function trendChange(bestPair, tf){
